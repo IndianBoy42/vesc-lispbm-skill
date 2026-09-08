@@ -1,6 +1,6 @@
 ---
 name: vesc-lispbm
-description: "Write lispBM scripts and native C extensions for VESC motor controllers. Use when coding in lispbm for VESC firmware, interfacing with motors/CAN/GPIO/IMU, or building native C extensions."
+description: "Write, test and debug lispBM scripts and native C extensions for VESC motor controllers. Use when coding in lispbm for VESC firmware, interfacing with motors/CAN/GPIO/IMU/thermal sensors, building native C extensions, or running a script off-target in the bundled lispBM REPL."
 ---
 
 # VESC LispBM Skill
@@ -45,6 +45,20 @@ INIT_FUN(lib_info *info) {
 }
 ```
 
+## Deploying and watching a script
+
+1. VESC Tool → *LispBM Scripting* → load the `.lbm` source and upload. The script starts
+   running as soon as it is uploaded; a top-level infinite `loopwhile` blocks that thread,
+   `loopwhile-thd` (a macro over `spawn`) leaves the main thread free for the console.
+2. The script image is stored in flash and runs again on boot. `lbm-erase` clears it,
+   `image-save` writes the current heap out, `lbm-write`/`lbm-run` manage it by hand.
+3. Watch it: `plot-init` / `plot-add-graph` / `plot-send-points` feed VESC Tool's plot tab,
+   `print` goes to the terminal, `(send-data ...)` sends custom app data (also readable
+   from a Qml script), and `log-config-field` + `log-start -1` + `log-send-f32` writes a
+   proper log into VESC Tool instead of plotting.
+4. `(stats)` in the terminal gives heap use, GC counters and the GC stack high-water mark —
+   the first thing to check when a long-running script behaves oddly or restarts.
+
 ## Architecture
 
 ### How It Works
@@ -53,16 +67,20 @@ INIT_FUN(lib_info *info) {
 3. **VESC-Tool** provides the IDE for writing/uploading scripts
 4. **Native extensions** are C functions compiled to ARM thumb binaries, uploaded as byte arrays, and loaded with `load-native-lib`
 
-### Key Paths (in lispBM repo)
-- `lispBM/` — LispBM language implementation
-- `lispBM/doc/lbmref.md` — Full language reference (9800+ lines)
-- `lispBM/doc/runtimeref.md` — Runtime extensions reference
-- `lispBM/doc/gotchas.md` — Gotchas and caveats
-- `c_libs/` — Native extension SDK
-- `c_libs/vesc_c_if.h` — VESC C interface (all available functions)
-- `c_libs/rules.mk` — Build system for native extensions
-- `c_libs/examples/` — Example extensions
-- `lispif_c_lib.c` — Implementation of the C interface on VESC firmware
+### Where things are
+This skill lives inside a VESC firmware checkout, so paths below are relative to the skill
+directory (`<fw>/lispBM/skill`).
+
+- `../README.md` — **the ESC/Express extension reference**: every function a script can
+  call, with signature, platform (ESC vs Express) and minimum firmware version. It is the
+  only complete list; this skill does not duplicate it.
+- `../lispif_vesc_extensions.c` — ground truth for which names the firmware registers
+  (`lbm_add_extension("name", ...)`) and with what argument handling.
+- `../lispif.c` — script heap sizing, image save/restore, the `(stats)` counters.
+- `../lispBM/` — upstream lispBM: `src/`, `include/`, `doc/` (language, runtime, display and
+  dynlib references), `repl/` (a working x86-64 REPL: `repl/repl`), `tests/`.
+- `../c_libs/` — native extension SDK: `vesc_c_if.h`, `rules.mk`, `examples/`.
+- `../lispif_c_lib.c` — implementation of the C interface (`VESC_IF`) inside the firmware.
 
 ### Loading Native Extensions from Lisp
 ```lisp
@@ -86,16 +104,55 @@ See `ref/` directory for section-by-section language reference extracted from `l
 - **`trap`** for error handling (returns `'(exit-ok val)` or `'(exit-error sym)`)
 - **Byte arrays** `[1 2 3]` are distinct from lisp arrays `[| 1 2 3 |]`
 - **Concurrency** via `spawn`/`send`/`recv` (Erlang-style)
+- Numbers are **float32** on VESC (`lbm_float = float`): a single precision sum over a long
+  window loses the variance the fit is made of, so keep accumulators small (centre them on
+  a window reference rather than on zero) or use fewer samples.
+
+### Traps that fail silently or cryptically
+- **`t` and `nil` are self-evaluating constants.** `(defun f (t) (+ t 5))` compiles and then
+  throws `type_error` on every call. Never bind `t`.
+- **`defun` takes exactly one body expression.** `(defun f (x) a b)` defines the body as `a`
+  and silently drops `b`; wrap multi-statement bodies in `{ ... }`.
+- **No scientific notation.** `1e-9` reads as the symbol `e-9`, not a number.
+- **`def`/`define` write the global environment**, from anywhere, including inside a
+  function or a `{}` block. Use `let` for anything local.
+- **`bufget-f32`/`bufset-f32` index in bytes**, not elements: element `i` is at `(* 4 i)`.
+- **`mod` follows the sign of the dividend**; add the modulus before the `mod` if the result
+  must be non-negative.
+- The full verified table, with symptoms, is in `ref/testing.md`. Read it before a long
+  debugging session.
+
+### Cost and lifetime of a script
+- Memory: ~2761 cons cells (~22 KB) plus a separate 28 KB pool for arrays and byte buffers
+  (`../lispif.c`). A ring buffer of N floats costs `4*N` bytes of the pool.
+- The script's globals live in one global environment that outlives the script's own
+  thread and is shared with anything else loaded, so prefix names with something script
+  specific rather than using `n`, `dt`, `i`.
+- A script is uploaded to flash and runs on boot; `(stats)` reports heap use, GC counters
+  and the GC stack high-water mark. To avoid the collector entirely, do not allocate in the
+  loop: mutate buffers with `bufset-*` and lists/arrays with `setix`.
 
 ### VESC-Specific LispBM Functions
-These are available when running on VESC firmware (not in standalone LispBM):
-- Motor control: `get-rpm`, `get-duty`, `set-duty`, `set-current`, etc.
-- CAN bus: `can-send`, `can-recv`, `can-set-cid`
-- GPIO: `gpio-configure`, `gpio-write`, `gpio-read`
-- ADC: `get-adc`
-- IMU: `get-imu-rpy`, `get-imu-accel`, `get-imu-gyro`
-- Display: `disp-render`, `disp-clear`
-- Config: `get-selected-motor`, `set-selected-motor`
+Available only on VESC firmware, not in standalone lispBM. Names below are verified against
+`../lispif_vesc_extensions.c`; `ref/vesc-esc-extensions.md` maps the whole surface by group.
+
+- Motor state: `get-rpm`, `get-rpm-fast`, `get-duty`, `get-current`, `get-current-in`,
+  `get-id`, `get-iq`, `get-vd`, `get-vq`, `get-pos`, `get-batt`, `get-vin`, `get-fault`
+- Thermal: `get-temp-fet` (argument selects sensor 1..3, 0/omitted = hottest), `get-temp-mot`
+- Control: `set-current`, `set-current-rel`, `set-duty`, `set-brake`, `set-rpm`, `set-pos`,
+  `set-kill-sw`, `select-motor`, `app-disable-output`
+- Timing: `systime` (ticks, 10 kHz on ESC), `secs-since`, `sleep` (seconds)
+- Config: `conf-get`, `conf-set`, `conf-store`, `eeprom-store-f`, `eeprom-read-f`
+- CAN: `can-send-sid`, `can-send-eid`, `can-recv-sid`, `can-recv-eid`, `canget-*`, `canset-*`
+- IO: `gpio-configure`, `gpio-write`, `gpio-read`, `pwm-set-duty`, `icu-width`, `get-adc`,
+  `i2c-start`, `i2c-tx-rx`, `uart-start`, `uart-write`
+- IMU: `get-imu-rpy`, `get-imu-quat`, `get-imu-acc`, `get-imu-gyro`, `get-imu-mag`
+- Instrumentation: `plot-init`, `plot-add-graph`, `plot-send-points`, `send-data`,
+  `log-config-field`, `log-start`, `log-send-f32`, `stats`, `sysinfo`
+
+Do not guess a name from another platform: there is no `can-send`, `disp-render` or
+`get-imu-accel`, and the CAN temperature getters (`canget-temp-motor`) are spelled
+differently from the local one (`get-temp-mot`).
 
 ## Reference Files
 
@@ -110,6 +167,10 @@ python3 gen_vesc_c_if_docs.py --header ~/dev/vesc/lispBM/c_libs/vesc_c_if.h
 
 - `ref/INDEX.md` — Master index of all language sections
 - `ref/NN-*.md` — Individual sections from lbmref.md
+- `ref/vesc-esc-extensions.md` — the ESC-side API map, where to look up a name, memory
+  budget, and the traps around naming
+- `ref/testing.md` — **how to run a script headlessly** on the bundled x86-64 REPL, how to
+  stub the VESC-only functions with a synthetic signal, and the verified gotcha table
 - `ref/doc/lbmref.md` — Full language reference
 - `ref/doc/runtimeref.md` — Runtime extensions
 - `ref/doc/gotchas.md` — Gotchas and caveats
