@@ -58,6 +58,16 @@ INIT_FUN(lib_info *info) {
    proper log into VESC Tool instead of plotting.
 4. `(stats)` in the terminal gives heap use, GC counters and the GC stack high-water mark —
    the first thing to check when a long-running script behaves oddly or restarts.
+5. **An upload can report `FAILED` and still have worked.** The firmware stops LispBM and
+   erases two flash regions before streaming a byte, then runs the whole restart and parse
+   inside the first chunk's acknowledgement (`comm/commands.c:1403`, `lispBM/lispif.c:494`),
+   while the host waits 8 s for the erase and 4 s per chunk. Verified: four uploads spaced
+   45 s apart succeeded in ~3 s each, const block or not; three back-to-back failed 3/3. So:
+   keep the uploaded file small (strip comments), do one upload at a time, do not queue
+   commands behind it — they run against a half-built image and fail as
+   `variable_not_bound` — and confirm by calling a function rather than trusting the verdict.
+   Numbers and the mechanism: `ref/performance-and-memory.md`; harness detail:
+   `vesc-tool-harness/SKILL.md`.
 
 ### Driving the interpreter from a host script
 

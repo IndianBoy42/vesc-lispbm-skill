@@ -297,6 +297,22 @@ and `QmlUi` are context properties from `QmlUi::startCustomGui`
    `VescInterface::tcpInputConnected` sets `mTcpConnected = true` immediately, but the fw
    retry timer disconnects after ~2 s of silence (`vescinterface.cpp:3242-3260`). So with a
    window that has no device attached, the harness connects and then drops, forever.
+3a. **A window with no device is a trap, and there is a one-line fix.** When the window's
+   serial link is gone, `fuser /dev/ttyACM0` shows no holder, the window still listens, and
+   the harness connects and drops forever (item 3). Reconnect without touching the GUI:
+
+   ```sh
+   vesc_tool --vescPort /dev/ttyACM0 --tcpServer 65103 --retryConn
+   ```
+
+   That single process connects to the ESC and serves TCP, so the harness attaches to it
+   directly. Check the link before blaming the script:
+
+   ```sh
+   fuser -v /dev/ttyACM0        # must show the vesc_tool pid
+   ss -ltnp | grep 65103        # must be LISTEN on that pid
+   ```
+
 4. **Do not touch the same script from both sides.** An erase/upload from the window while
    the harness uploads produces interleaved chunked writes on one link.
 5. **REPL replies are easy to lose, and there is no correlation id.**
@@ -311,9 +327,30 @@ and `QmlUi` are context properties from `QmlUi::startCustomGui`
    `(print "x")` emits the printed line *and* the echo `> t`. There is no `<<END>>`
    sentinel any more: it was measured to arrive while later expressions were still
    unanswered, so it cannot be trusted. Expect ~1.4 s per expression round trip.
-6. **Uploads block in nested event loops.** Erase up to 8 s, each 384-byte write up to 1 s
-   with 5 retries (`codeloader.cpp:74-92, 398-420`). Timers and stats polling stall for the
-   duration, in the harness's process only.
+6. **Uploads block in nested event loops, and the device blocks inside the acks.** Erase up
+   to 8 s, each 384-byte write up to 1 s with 5 retries (`codeloader.cpp:74-92, 398-420`).
+   Timers and stats polling stall for the duration, in the harness's process only.
+
+   The host timeouts are only half of it. On the device, `COMM_LISP_ERASE_CODE` calls
+   `lispif_stop()` and erases **both** the const region and the code region before a byte is
+   streamed (`vesc/comm/commands.c:1403`), and the **first stream chunk** runs the entire
+   restart and parse synchronously before it acks (`vesc/lispBM/lispif.c:494`). So that ack
+   has to cover stop + two sector erases + parse of the whole script.
+
+   Measured on an STM32 ESC: 7 KB uploads in 2.9 s, 10 KB in 3.1-3.5 s — identical with and
+   without a `@const-start` block. Consequences you will hit:
+
+   - **Failures are timeouts, not rejections.** A `FAILED` verdict usually means the ack
+     arrived after the 8 s erase / 4 s chunk budget, or the TCP session dropped inside that
+     window (52 disconnect/reconnect cycles observed in one failed attempt), while the
+     firmware finished the work anyway. Verify by *calling a function*, never by the verdict.
+   - **Never queue anything behind an upload.** The next command executes against a
+     half-built image and fails with `variable_not_bound`; the tell is that it looks like a
+     missing definition rather than an upload problem.
+   - **One upload at a time, spaced.** Four uploads 45 s apart succeeded 4/4; three
+     back-to-back failed 3/3, const block or not.
+   - **Keep the artifact small.** Comments are shipped and re-parsed (the ESC stores the
+     script as text), so strip them for the file you upload.
 7. **`lispUploadFromPath` erases, `lispUploadString` does not.** The GUI erases explicitly
    with `size + 100` before `lispUpload` (`pagelisp.cpp:686-695`).
 8. **Size cap is derived from the fw params the harness read**: 128 KiB STM32, 512 KiB
