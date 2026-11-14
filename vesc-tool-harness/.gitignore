@@ -1,0 +1,6 @@
+# Runtime state of the harness, not part of the skill.
+commands.txt
+out.jsonl
+daemon.log
+daemon.pid
+config.json

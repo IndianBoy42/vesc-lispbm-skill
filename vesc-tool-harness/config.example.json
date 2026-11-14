@@ -1,0 +1,11 @@
+{
+  "expr": [],
+  "uploadPath": "",
+  "reduceLisp": false,
+  "statsIntervalMs": 1000,
+  "pollFileMs": 400,
+  "hideWindow": true,
+  "canFwd": -1,
+  "stayConnected": false,
+  "quitWhenDone": false
+}

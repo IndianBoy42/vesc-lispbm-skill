@@ -1,0 +1,24 @@
+# Commands for the persistent session. Copy to commands.txt, or append with
+#   ./run.sh send '<expression>'
+# Every line is handled in order; replies appear on the job's stdout.
+
+# A plain expression goes to the REPL.
+(set-print-prefix "agent| ")
+(get-vin)
+(get-rpm)
+
+# Several at once. Split on " ; ".
+:multi (get-duty) ; (get-temp-fet 0) ; (get-current)
+
+# Run a whole file, or erase + upload + run a script. Paths relative to this dir.
+:run probe.lisp
+:upload test.lbm
+
+# One stats sample (also polled automatically at statsIntervalMs).
+:stats
+
+# Liveness check: {k:"pong", connected:true}
+:ping
+
+# Exit the session.
+# :quit

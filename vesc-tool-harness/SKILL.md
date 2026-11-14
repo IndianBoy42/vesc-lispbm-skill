@@ -1,213 +1,441 @@
----
-name: vesc-lispbm-harness
-description: "Drive the LispBM interpreter on a live VESC from a host script through vesc_tool --loadQml: upload scripts, run REPL expressions, poll stats and plot points. Use when a workflow must be automated or agent-driven instead of clicking in the GUI."
----
+# Attaching to a VESC Tool window over TCP (experimental)
 
-# Driving LispBM from a host program (experimental)
+> **Status: experimental, partly verified.** Verified on vesc_tool 7.00 with a real TCP
+> server process but no motor controller: config loading, connect, `canFwd`, lifecycle and
+> reconnect all observed. Anything tagged **[UNVERIFIED]** needs a live VESC. When you use
+> this, replace those tags with what you saw and append to the Refinement log.
 
-> **Status: experimental, partly verified.** The mechanism below was confirmed against
-> vesc_tool 7.00 by running the harness with no device attached (script loads, `VescIf`
-> resolves, connection loop runs). Every claim tagged **[UNVERIFIED]** needs a real VESC
-> to confirm. When you use this, replace those tags with what you observed and append to
-> the Refinement log at the bottom. The goal is that this file becomes boring and accurate.
+## The idea
 
-## The problem
+Keep a VESC Tool window open, connected to the VESC, on the Scripting page, where you can
+watch. Then run `agent.qml` in a **second** vesc_tool process that connects to that window's
+TCP server. The second process drives the interpreter; you watch the first.
 
-vesc_tool's CLI cannot talk to the LispBM interpreter. There is no REPL flag: the option
-list in `vesc_tool:main.cpp:75-119` has only `--uploadLisp`, `--eraseLisp`, `--reduceLisp`,
-`--packLisp`, `--bridgeAppData`. Nothing connects `Commands::lispPrintReceived` outside the
-GUI (`vesc_tool:pages/pagelisp.cpp:204`), so `--uploadLisp` cannot show you what the script
-printed, and there is no way to evaluate an expression.
+Nothing is hidden. The window's `TcpServerSimple` is spliced into its own `Packet` in both
+directions (`vescinterface.cpp:218-224`), so:
 
-The GUI page is not magic. `PageLisp` is a thin shell over exactly two objects:
+- **Harness → device:** the packet goes out to the VESC from the window's serial/CAN link.
+- **Device → window:** every reply is fed to the window's `Commands`
+  (`VescInterface::packetReceived`) *and* forwarded to the harness.
 
-- `mVesc` (`VescInterface`) - `commands()`, `isPortConnected()`
-- `mLoader` (`CodeLoader`) - pack / erase / upload / stream / read
+So agent-triggered `print` output appears in the window's console, and the window's stats
+bars update from the harness's polls even though the harness is the one asking. What the
+window does **not** see is the harness's request packets as commands, because those bypass
+`mCommands` on the way out.
 
-`vesc_tool --loadQml FILE` runs your own QML in the same engine with the same objects, no
-window interaction required. That is the surface. `mobile/Lisp.qml` is the proof: it
-implements the whole mobile Lisp editor against it.
+```
+   agent.qml  ──TCP──▶  your window  ──serial/CAN──▶  VESC
+   (process 2)          (process 1)                  (LispBM)
+        ▲                    │
+        └──── same replies ──┴──▶ Scripting page, plot, stats
+```
 
-## Configure it
+## Starting the window with the TCP server on
 
-The config block at the top of `agent.qml` is the whole interface:
+`--tcpServer` does **not** do this. It is a separate headless mode: no main window, no
+Scripting page, nothing to watch (`main.cpp:1555` is a `QCoreApplication` branch). It is only
+useful for a relay with no GUI.
 
-| Property | Meaning |
+The server you want is started **from the window**, and vesc_tool does not remember the
+checkbox (`pageconnection.cpp:681` is the only writer, `pageconnection.ui:461` is the only
+control, and nothing in the page uses `QSettings`). So once per launch:
+
+1. Launch `vesc_tool` normally, with `DISPLAY` set. A desktop launcher is fine.
+2. **Connection** page (left sidebar) → **Connect** to the VESC. Autoconnect over USB is
+   usually enough.
+3. Scroll to the **TCP Server** group and tick **Enable TCP Server**. The port spinbox
+   defaults to `65102` and greys out once enabled.
+4. Confirm under *Connected Clients* that the harness's IP appears after you start it.
+
+```sh
+vesc_tool                      # from PATH, or your desktop launcher
+# then, in the GUI: Connection -> Connect, then Enable TCP Server
+```
+
+Observed on 7.00: the port and last connection type persist in
+`~/.config/VESC/VESC Tool.conf` (`tcp_port`, `connection_type`), but the enable checkbox
+does not, and a plain launch opens no listener. Verified by starting the GUI and checking
+`ss -ltn`.
+
+If you want the Scripting page in front, open it and load the script before starting the
+harness, so you can see the console fill up.
+
+### Watching
+
+| In the window | What it shows |
 |---|---|
-| `uploadPath` | `.lbm` source to erase + upload + run once connected. Empty = leave flash alone. Destructive. |
-| `reduceLisp` | strip comments/spaces/imports before packing |
-| `statsIntervalMs` | stats poll period; 1000 is safe, faster is wasted |
-| `quitAfterUpload` | call `Qt.quit()` when the upload finishes, for one-shot CLI use |
+| Scripting → console | every `print`, including from the harness's REPL expressions |
+| Scripting → CPU / Heap / Mem bars | update from the harness's polls too, because replies fan out to both processes (`vescinterface.cpp:223`) |
+| Scripting → plot | `plot-*` output from whatever is running |
+| Connection → TCP Server → Connected Clients | the harness, once attached |
 
-`Qt.quit()` from the loaded script exits with status 0 (verified), so a shell wrapper can
-treat `quitAfterUpload: true` as a normal command.
+### Poll All is fine, and the spinbox lies
 
-## Run it
+Enabling **Poll All** or **Poll VT** to watch values is the right call. It costs about 1
+request per second, not the "10 Hz" the spinbox suggests.
+
+`Commands::lispGetStats` refuses to send while a previous request is outstanding
+(`vesc_tool:commands.cpp:2244`), and that flag only clears when the reply arrives (`:1023`)
+or when a 10 ms tick counter drains (`:2371`). `mTimeoutCount = 100`, so the floor is
+**1 s per request whatever `pollRateBox` says**. `pagelisp.cpp:135` still sets the timer to
+`1000 / value`, so nine of ten firings at the 10 Hz default do nothing.
+
+Do not run both pollers at once expecting more resolution: with the GUI at 1 Hz and the
+harness at `statsIntervalMs: 1000`, each silently drops about half its intended requests.
+Pick one — the GUI if you want to watch, the harness if you want the numbers in its output.
+
+What the request actually costs the device, from `vesc/lispBM/lispif.c:210-286`:
+
+| Cost | Detail |
+|---|---|
+| Reply size | up to ~300 bytes; the global-env walk stops at `ind > 300` |
+| Bandwidth | negligible |
+| **The real cost** | `pause_eval(0, 2000)` at line 252 **halts the LispBM evaluator** and polls at 1 ms granularity until the VM pauses or 2 s elapse |
+
+So the interference is **jitter, not throughput**: at 1 Hz, a few milliseconds per second
+while your script's loop is suspended. A script with a tight sample period will see the
+hitch; a control loop will not care. Poll VT filters which globals are copied but takes the
+same pause, so it is not cheaper.
+
+If you want the GUI's view *and* a timing-sensitive script, leave the page on Poll Off and
+raise the harness's `statsIntervalMs` instead — the harness's replies still populate the
+window's bars.
+
+## Run it as ONE persistent session
+
+Start it once per working session and leave it up. The process hides its own window
+(verified: the X window goes `IsUnMapped` and the script keeps running), so there is nothing
+to minimise and nothing that flickers. Commands arrive through a file it watches; replies go
+out on its stdout.
+
+Run it as a **background job with the agent's job facility**, which already provides a name,
+readiness detection and kill-by-id:
+
+```
+bash(name="lbmharness", ready={"log": "\"k\":\"connected\""}, pty=true,
+     command="cd <skill>/vesc-tool-harness && ./run.sh 127.0.0.1 65102")
+```
+
+Then, from any later turn:
 
 ```sh
 cd <skill>/vesc-tool-harness
-xvfb-run -a vesc_tool --loadQml agent.qml \
-    --qmlAutoConn --vescPort /dev/ttyACM0 --retryConn
+./run.sh send '(+ 1 2)'
+./run.sh send ':multi (get-vin) ; (get-rpm)'
+./run.sh send '# a comment, ignored'
+./run.sh send ':upload test.lbm'
+./run.sh send ':ping'
+./run.sh send ':quit'
 ```
 
-- `--qmlAutoConn` is **required**. Without it nothing ever calls `connectSerial`: the
-  reload timer fires at `vesc_tool:main.cpp:1683` but `connTimer` only starts inside that
-  `if` block. Verified: without the flag, `isPortConnected()` stays false forever and no
-  connection attempt is logged.
-- Drop `--vescPort` to autoconnect (scans serial ports).
-- `--retryConn` keeps the process alive across failed connects instead of quitting.
-- `--offscreen` does **not** help: it is only honoured in the three `QCoreApplication`
-  branches (`main.cpp:1096, 1556, 1580`), never in the GUI branch at `main.cpp:1594`.
-  Some builds do not ship the offscreen QPA plugin at all, and the static Qt build used
-  for the releases has no `offscreen` plugin. Use `xvfb-run`.
-- `--canFwd <id>` works as usual and applies to everything the script sends.
+Read the replies from the job's streams (`proc://lbmharness`), not from a file. Adding a
+pidfile, `setsid`, or a service manager is redundant: the job facility already owns the
+lifecycle, and a foreground pipeline's `$!` is the *last* stage, so hand-rolled tracking
+reports "not running" while vesc_tool is still alive. That mistake was made and removed.
+
+Do **not** wrap this in a shell loop that starts a fresh `--loadQml` per command. That is
+what this design replaces: each launch builds a new window and a new TCP connection, and the
+window flashes open and shut.
+
+### commands.txt
+
+Append one command per line. `:multi` splits on ` ; `.
+
+| Line | Effect |
+|---|---|
+| `<expr>` | evaluate through the REPL |
+| `:multi <a> ; <b>` | several expressions, queued |
+| `:run <path>` | evaluate a whole file |
+| `:upload <path>` | erase + upload + run a `.lbm` (path relative to this directory) |
+| `:stats` | request one stats sample |
+| `:ping` | emit `{k:"pong", connected:…}` |
+| `:quit` | exit cleanly |
+| `# ...` | ignored |
+
+The watcher tracks a byte offset, so restarting keeps its place and old commands do not
+replay; a half-written line is buffered until its newline arrives. Both verified.
+
+### One-shot mode
+
+```sh
+./run.sh once [host] [port]      # run config.json, print, exit
+```
+
+Same script, no file watching; exits when the queue drains.
+
+### Details
+
+- `--loadQml` **must be an absolute path**. The script is injected through
+  `Qt.createQmlObject`, so its base URL is `qrc:/res/qml/`; a relative path breaks both the
+  sidecar config lookup and any file read. `run.sh` handles it.
+- The mode rides in the URL fragment (`tcp://host:port#daemon`). vesc_tool rejects any flag
+  it does not define (`main.cpp:756-763`, exit 1 plus help), so it cannot be `--lbmMode`.
+- The harness is a second GUI-app process, so it needs the same `DISPLAY` as your window.
+  `run.sh` refuses to start without one.
+- Only TCP is supported. `--vescPort /dev/ttyACM0` makes `agent.qml` exit immediately: two
+  processes cannot share one serial port, and driving it directly defeats the point.
+- `--canFwd <id>` targets a different CAN node than the window is talking to. The two
+  processes have independent `Commands`, so `setSendCan` does not leak between them.
+- On disconnect the harness notices within one poll period, logs `disconnected`, and
+  reconnects every 2 s. Verified by killing and restarting the relay underneath it: the same
+  process served a command before and after.
+
+## Configure it
+
+`agent.qml` reads `config.json` from its own directory at startup, then lets the command
+line override the connection. See `config.example.json`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `expr` / `expressions` | `[]` | REPL expressions to run on connect, in order; string or array |
+| `uploadPath` | `""` | `.lbm` file to erase + upload + run on connect. Destructive |
+| `reduceLisp` | `false` | strip comments/spaces/imports before packing |
+| `statsIntervalMs` | `1000` | stats poll period, only used when `stayConnected` is true; the device path floors at 1 s regardless |
+| `replPaceMs` | `700` | minimum gap between REPL sends; below ~700 ms replies are lost |
+| `replQuietMs` | `700` | no output for this long counts as "reply finished" |
+| `canFwd` | `-1` | CAN node to target, `-1` = the window's own device |
+| `stayConnected` | `false` | poll stats every `statsIntervalMs`; off by default because one record per second drowns the command stream — use `:stats` or the GUI |
+| `quitWhenDone` | `false` | exit 0 when the queue drains (`once` mode) |
+| `pollFileMs` | `400` | how often `commands.txt` is checked |
+| `hideWindow` | `true` | unmap this process's own window at startup |
+| `port` | — | only accepted as `tcp://host:port`; `--vescPort` overrides |
+
+Config is read **once**, at startup. To change behaviour mid-session, send commands; to
+change config, restart the job. Editing `config.json` under a running session does nothing.
+
+```json
+{
+  "uploadPath": "/home/me/lbm/test.lbm",
+  "expr": ["(set-print-prefix \"agent| \")", "(+ 1 2)"],
+  "statsIntervalMs": 1000
+}
+```
+
+The script never writes files. In `daemon` mode even `uploadPath` and `expr` are better sent
+through `commands.txt` (`:upload`, bare expressions), so you do not have to restart to try
+something.
 
 ## Reading the output
 
-Every `console.log` from the loaded QML reaches stdout prefixed with `qml: `:
+Each event is one line, `LBM|<TAG>|<payload>`, on stdout. `run.sh` strips Qt's `qml: `
+prefix and everything that is not a harness line, so what the job stream shows is already
+clean:
 
 ```
-qml: LBM|STATE|harness loaded
-qml: LBM|PRINT|<<END>>
+LBM|STATE|connected
+LBM|OUT|{"k":"cmd","line":"(+ 1 2)"}
+LBM|OUT|{"k":"tx","expr":"(+ 1 2)","tag":""}
+LBM|PRINT|> 3
+LBM|OUT|{"k":"reply","tag":"","lines":["> 3"]}
+LBM|REPL|done (1 line(s))
 ```
 
-`agent.qml` emits one line per event as `LBM|<TAG>|<payload>`:
+`PRINT` is for humans; `OUT` is the machine channel. `OUT` is one JSON object per event, so
+a caller parses replies without unpacking `|`-separated strings:
+
+| `k` | Payload |
+|---|---|
+| `hello` | mode, port, on startup |
+| `cmd` | `line` — a command read from `commands.txt` |
+| `tx` | `expr`, `tag` — sent to the device |
+| `reply` | `tag`, `lines[]`, optional `timeout` |
+| `stats` | `stats` — the same map the GUI shows |
+| `plot` | `x`, `y` |
+| `upload` | `path`, `ok` |
+| `connected` / `disconnected` | link state changes |
+| `pong` | reply to `:ping`, with `connected` |
+
+Every record carries `t`, epoch milliseconds.
 
 | Tag | Meaning |
 |---|---|
-| `STATE` | lifecycle: loaded, connected, upload ok / FAILED |
+| `OUT` | structured record, table above — **parse this** |
+| `STATE` | human lifecycle log: loaded, hidden, target, connected, upload |
+| `CONF` | sidecar config loaded / missing / invalid |
 | `TX` | a REPL expression was sent |
-| `PRINT` | `print` output from the interpreter, and REPL results |
-| `STAT` | JSON of `{cpu_use, heap_use, mem_use, stack_use, done_ctx_r, globals[{name,value}]}` |
+| `REPL` | reply finished (line count) or timed out |
+| `PRINT` | interpreter output, including REPL results |
 | `RUNNING` | reply to `lispSetRunning` |
-| `PLOT`, `PLOTINIT` | LispBM `plot-*` stream |
 | `STREAM` | `lispStreamString` progress / result |
 
-Grep for `LBM|` and ignore the rest; Qt prints font, EGL and serial noise to the same
-stream. **`--debugOutFile F` sends these lines to `F` only, without the `qml:` prefix, and
-silences stdout** (`main.cpp:134-141` installs a handler that ignores the stream). Pick one
-channel, not both.
+`run.sh` filters to `LBM|` and strips the `qml: ` prefix. Do **not** add
+`--debugOutFile`: it installs a handler that writes only to the file and silences stdout
+(`main.cpp:134-141`).
 
 ## Capability map
 
-| GUI Lisp page feature | QML call | Where it lives |
+Everything the Scripting page does, through the same two objects the page itself uses:
+
+| GUI feature | Call | Source |
 |---|---|---|
-| Upload + run | `loader.lispUploadFromPath(path, reduce)` then `cmd.lispSetRunning(1)` | `vesc_tool:codeloader.cpp:470` |
-| Upload from string | `loader.lispUploadString(src, dir, reduce)` - **does not erase** | `codeloader.cpp:459` |
-| Pack imports / reduce | second argument is the directory `import` is resolved from | `codeloader.cpp:459` |
+| Upload + run | `loader.lispUploadFromPath(path, reduce)` then `cmd.lispSetRunning(1)` | `codeloader.cpp:470` |
+| Upload from string | `loader.lispUploadString(src, dir, reduce)` — does **not** erase | `codeloader.cpp:459` |
+| Import resolution | second argument is the directory `import` is resolved from | `codeloader.cpp:240-290` |
 | Erase | `loader.lispErase(size)` | `codeloader.cpp:63` |
 | Stream code | `loader.lispStreamString(str, mode)` | `codeloader.cpp:489` |
-| Read code back | `loader.lispReadWithPath()` | `codeloader.h:48` |
-| REPL send | `cmd.lispSendReplCmd(text)` (`COMM_LISP_REPL_CMD` = 138) | `commands.h:289` |
-| REPL receive | signal `lispPrintReceived(str)` (`COMM_LISP_PRINT` = 135) | `commands.cpp:1018` |
+| Read code back | `loader.lispReadWithPath()` (7.00 only) | `codeloader.h:48` |
+| REPL send | `cmd.lispSendReplCmd(text)` — `COMM_LISP_REPL_CMD` = 138 | `commands.h:289` |
+| REPL receive | `lispPrintReceived(str)` — `COMM_LISP_PRINT` = 135 | `commands.cpp:1018` |
 | Run / stop | `cmd.lispSetRunning(bool)` | `commands.h` public slots |
-| CPU / heap / mem / stack / globals | signal `lispStatsRxMap(QVariantMap)` | `commands.cpp:1022` |
-| Plot stream | signals `plotInitReceived`, `plotDataReceived`, `plotAddGraphReceived` | `commands.h:135` |
-| Device telemetry | `getValues()`, `getStats(mask)`, `getImuData(mask)` + matching signals | `res/qml/Examples/PollValues.qml` |
+| Stats + bindings | `lispStatsRxMap(QVariantMap)` | `commands.cpp:1040-1052` |
+| Plot stream | `plotInitReceived`, `plotDataReceived`, `plotAddGraphReceived` | `commands.h:135-138` |
+| Device telemetry | `getValues()`, `getStats(mask)`, `getImuData(mask)` | `res/qml/Examples/PollValues.qml` |
 
-`CodeLoader` is registered as a QML type named `CodeLoader` (`main.cpp:265`), but it is
-**not** importable from the implicit context: you must
-`import Vedder.vesc.codeloader 1.0` or creation fails with `CodeLoader is not a type`.
-`VescIf`, `QmlUi` and `Utility` are context properties set by `QmlUi::startCustomGui`
-(`mobile/qmlui.cpp:95-97`); `Commands` needs `import Vedder.vesc.commands 1.0`.
-
-## Version requirement
-
-The harness needs `lispUploadFromPath`, `lispStreamString`, and (for stats)
-`lispStatsRxMap`. The latter is missing from older builds, which log:
-
-```
-QML Connections: Detected function "onLispStatsRxMap" in Connections element.
-This is probably intended to be a signal handler but no signal of the target matches the name.
-```
-
-Probe the binary before trusting it:
-
-```sh
-for s in lispUploadFromPath lispUploadString lispStreamString lispReadWithPath lispStatsRxMap; do
-    printf '%s: ' "$s"; strings "$(command -v vesc_tool)" | grep -cx "$s"
-done
-```
-
-Measured `count == 1` (present) on the binaries available when this was written:
-
-| Symbol | 7.00 | 2025-11 beta | 6.06 |
-|---|---|---|---|
-| `lispUploadFromPath` | yes | yes | yes |
-| `lispUploadString` | yes | **no** | **no** |
-| `lispStreamString` | yes | yes | yes |
-| `lispReadWithPath` | yes | **no** | **no** |
-| `lispStatsRxMap` | yes | **no** | **no** |
-
-A `0` is a hint, not proof: a symbol can be absent from `strings` output for unrelated
-reasons. The definitive test is running the harness and watching for the QML warning.
-
-On the older builds, use `lispStatsRx(LISP_STATS)` (a `Q_GADGET` with `cpu_use`,
-`heap_use`, `mem_use`, `stack_use`, `done_ctx_r` — `datatypes.h:1145`) instead of the map,
-and `lispReadCode` + `lispReadCodeRx` instead of `lispReadWithPath`.
+Two imports are required or nothing works: `Vedder.vesc.commands` for `Commands`, and
+`Vedder.vesc.codeloader` for `CodeLoader` (otherwise `CodeLoader is not a type`). `VescIf`
+and `QmlUi` are context properties from `QmlUi::startCustomGui`
+(`vesc_tool:mobile/qmlui.cpp:95-97`).
 
 ## Constraints that bite
 
-1. **The REPL has no request/response correlation.** `lispSendReplCmd` returns `void` and
-   replies arrive as undifferentiated `COMM_LISP_PRINT` packets. The harness brackets each
-   expression with `(print "<<END>>")`. Ordering over one serial link makes this work
-   **[UNVERIFIED for CAN-forwarded devices and for multi-device setups]**.
-2. **Uploads block in nested event loops.** Erase waits up to 8 s, each 384-byte write up
-   to 1 s with 5 retries (`codeloader.cpp:74-92, 398-420`). The QML item's timers stall
-   during an upload, so do not expect stats polling to continue.
-3. **`lispUploadFromPath` erases, `lispUploadString` does not.** The GUI erases explicitly
-   before calling `lispUpload` (`pagelisp.cpp:686-695`). Use the FromPath variant or erase
-   yourself, with `size + 100` as the GUI does.
-4. **Size cap**: 128 KiB on STM32, 512 KiB on ESP32 (`codeloader.cpp:380-388`).
-5. **Stats requests are dropped, not queued.** `lispGetStats` returns immediately while a
-   previous request is in flight (`commands.cpp:2240`). 1 Hz is safe; faster is wasted.
-6. **Long expressions must be streamed, not sent.** The GUI switches at 400 characters
-   (`pagelisp.cpp:369`): `lispStreamString` above that, `lispSendReplCmd` below.
-7. **Root element must be an `Item`.** `main.cpp:1681-1683` prepends
-   `import "qrc:/mobile"`, `import Vedder.vesc.vescinterface 1.0` and
-   `import "file:<dir>"`, then hands the string to `DynamicLoader.qml`, which calls
-   `Qt.createQmlObject` inside an `Item` container. A `Window` root will not work.
-8. **Cosmetic teardown error.** `DynamicLoader.qml:50: TypeError: Cannot call method
-   'getAppHexColor' of null` appears on exit. Ignore it; it comes from the loader's
-   background rectangle, not from your script.
-9. **No filesystem escape by default.** `console.log` is the only output. If a real file or
-   socket is needed, `SysCmd.executeCommand` (`main.cpp:267`, Linux only) runs a shell and
-   emits the output as signals.
+1. **One TCP client.** `TcpServerSimple::newTcpConnection` closes the second socket
+   (`tcpserversimple.cpp:134-137`). Close the harness before pointing anything else at the
+   port.
+2. **The window must stay open and connected.** Closing it strands the harness; the harness
+   then reconnects in a loop every 2 s and logs `connectTcp` until you restore it.
+3. **The harness sees `isPortConnected()` only after the firmware version comes back.**
+   `VescInterface::tcpInputConnected` sets `mTcpConnected = true` immediately, but the fw
+   retry timer disconnects after ~2 s of silence (`vescinterface.cpp:3242-3260`). So with a
+   window that has no device attached, the harness connects and then drops, forever.
+4. **Do not touch the same script from both sides.** An erase/upload from the window while
+   the harness uploads produces interleaved chunked writes on one link.
+5. **REPL replies are easy to lose, and there is no correlation id.**
+   `lispSendReplCmd` returns `void` and answers arrive as undifferentiated
+   `COMM_LISP_PRINT`. Measured on 7.00 + fw 7.0 against a real ESC:
+   - sending four expressions back to back answered only the first;
+   - pacing at 250 ms lost every second one;
+   - **700 ms answered 8/8**, with stats polling both on and off.
+
+   So `agent.qml` serialises: one expression in flight, next one only after the reply has
+   been quiet for `replQuietMs`. Completion is "no output for 700 ms", not "one line", because
+   `(print "x")` emits the printed line *and* the echo `> t`. There is no `<<END>>`
+   sentinel any more: it was measured to arrive while later expressions were still
+   unanswered, so it cannot be trusted. Expect ~1.4 s per expression round trip.
+6. **Uploads block in nested event loops.** Erase up to 8 s, each 384-byte write up to 1 s
+   with 5 retries (`codeloader.cpp:74-92, 398-420`). Timers and stats polling stall for the
+   duration, in the harness's process only.
+7. **`lispUploadFromPath` erases, `lispUploadString` does not.** The GUI erases explicitly
+   with `size + 100` before `lispUpload` (`pagelisp.cpp:686-695`).
+8. **Size cap is derived from the fw params the harness read**: 128 KiB STM32, 512 KiB
+   ESP32, and 128 KiB if the type is unknown (`codeloader.cpp:380-388`).
+9. **Stats requests are dropped, not queued, and the client caps them at 1 Hz.**
+   `lispGetStats` returns immediately while a request is in flight (`commands.cpp:2244`),
+   and that flag clears only on the reply or after 100 × 10 ms ticks (`:1023`, `:2371`). So
+   nothing — not `statsIntervalMs`, not the GUI's `pollRateBox` — can exceed 1 request/s.
+   Running two pollers halves each one's effective rate rather than doubling resolution.
+   Each request costs a `pause_eval(0, 2000)` on the device (`vesc/lispBM/lispif.c:252`),
+   which suspends the evaluator for a few ms; that is jitter, not throughput loss.
+10. **Long expressions must be streamed.** The GUI switches at 400 characters
+    (`pagelisp.cpp:369`); `runBlock()` does the same.
+11. **`--qmlAutoConn` destroys the script.** Its reconnect timer reloads
+    `DynamicLoader.qml` every second while disconnected (`main.cpp:1059-1067`), which tears
+    down the object tree your script lives in, and the script is never re-injected.
+    `agent.qml` owns its own connect timer for this reason. This applies whether or not you
+    use TCP.
 
 ## Extending the harness
 
-`agent.qml` is deliberately small: a config block at the top, a `repl()` helper, an
-`upload()` helper, signal handlers, and one polling timer. Add to it rather than writing a
-new file, so improvements accumulate in one place.
+Add to `agent.qml` rather than forking it. The shape is: config block, `log()`, `emit()`,
+`repl()`, `replFile()`, `runBlock()`, `upload()`, `handleLine()`, one connect timer, one poll
+timer, one `Connections` block. To add a command, extend `handleLine()`; to add an event,
+emit a new `k`.
 
-Useful next additions, in the order they usually get wanted:
+The watch loop reads whole files with a byte offset from the previous read, because QML
+cannot seek. `commands.txt` is therefore expected to grow, not to be rewritten with the same
+or smaller content — shrinking resets the offset, which is handled but means a rewrite
+replays nothing. If you want a queue rather than a log, move the file aside and rename it
+back (a "consume" pattern) and handle the inode change.
 
-- A work queue driven from a file or a socket instead of the hardcoded `uploadPath`.
-- A `mode` switch for `lispErase` + read-back, so an agent can diff what is on the device.
-- A `SysCmd` output sink so results land in a file without `--debugOutFile` swallowing
-  stdout.
-- CAN scan (`scanCan`, `getCanDevsLast`) and a per-device prefix via `(set-print-prefix ...)`.
+Wanted next, roughly in order:
 
-## Alternatives, and why they are worse
+- A "consume" queue instead of an append-only log, so `commands.txt` does not grow unbounded
+  over a long session.
+- A small file-replay queue: drop `*.lbm` into a watched directory and upload each in turn.
+- Read-back diff: erase nothing, `lispReadWithPath()`, and compare against the local file so
+  an agent can tell whether the device matches the repo.
+- `replSync(expr)` returning a promise resolved by the quiet-window detector, so a command
+  file could carry a correlation id and callers need not match on order.
+- Probe whether a *host-side* delay is really required, or whether the loss comes from
+  `lispSendReplCmd` queueing inside `Commands`. If a reply-driven schedule alone suffices,
+  drop `replPaceMs` to 0 and the round trip halves.
+- `scanCan()` / `getCanDevsLast()` plus per-device prefixes, for multi-VESC benches.
+
+## Why not the alternatives
 
 | Route | Verdict |
 |---|---|
 | `--uploadLisp`, `--eraseLisp`, `--bridgeAppData` | One-shot only. No REPL, no `print` capture, no stats. |
-| `--tcpServer` / `--tcpHub` + own protocol client | Full capability but you reimplement framing, CRC, chunked writes with per-chunk acks, and every `COMM_LISP_*` payload. `CodeLoader` already does it. |
-| "QML Scripting" page in the GUI | Same engine, gated behind clicks. `--loadQml` is that engine without the gate. |
-| `display_tool`, `application/template` | Unrelated. |
+| Own protocol client against the TCP server | Full capability, but you reimplement framing, CRC, chunked writes with per-chunk acks, and every `COMM_LISP_*` payload. `CodeLoader` already does all of it. |
+| "QML Scripting" page inside the window | Same engine, but the script would share the window's process; no isolation, and no second stdout. |
+| Serial `--vescPort /dev/ttyACM0` from the harness | Two processes cannot share one serial port, and driving it directly loses the observation loop. `agent.qml` refuses. |
 
-If you need this without a display server at all, the remaining gap is a `QCoreApplication`
-+ `QQmlEngine` mode in `main.cpp` that skips `QmlUi`; it does not exist today.
+If you ever need this with no window at all, the gap is a `QCoreApplication` +
+`QQmlEngine` mode in `main.cpp` that skips `QmlUi`; it does not exist today.
 
 ## Refinement log
 
-Append one dated entry per session that uses this. State what you ran, what broke, and what
-you changed. Delete the `[UNVERIFIED]` tags above as they get confirmed.
+Append one dated entry per session that uses this. Say what you ran, what broke, what you
+changed. Drop the `[UNVERIFIED]` tags as they get confirmed.
 
-- **2026-11-14** - Harness created. Verified with vesc_tool 7.00, no device: QML loads,
-  `VescIf.commands()` resolves, `--qmlAutoConn` drives the connect loop, `console.log`
-  reaches stdout as `qml: ...`, `--debugOutFile` suppresses stdout, `--offscreen` fails
-  (no plugin in the release build), `CodeLoader` needs the explicit import,
-  `lispStatsRxMap` missing from the 6.06 and Nov-2025 beta binaries. Upload, REPL exchange,
-  stats and plot paths all still `[UNVERIFIED]` against hardware.
+- **2026-11-14 (persistent session)** - Replaced the per-command launch with one long-lived
+  process. `agent.qml` gained a file-driven command protocol (`commands.txt` with
+  `<expr>`, `:multi`, `:run`, `:upload`, `:stats`, `:ping`, `:quit`), structured `OUT`
+  records on stdout, `hideWindow`, and reconnect-on-drop; `run.sh` became a launcher with
+  `attach` / `once` / `send`.
+
+  Two design mistakes found and removed:
+
+  1. **Reinvented process supervision.** The first version added `setsid`, a pidfile, and
+     `status`/`stop` verbs. Unnecessary: the agent's job facility already provides names,
+     readiness detection and kill-by-id. Worse, it was *broken*: `$!` after backgrounding a
+     pipeline is the last stage, so the pidfile tracked `sed` and `status` said "not
+     running" while vesc_tool was alive, leaving orphaned processes. Deleted.
+  2. **An `out.jsonl` side file.** The shell re-derived it from stdout with
+     `tee | grep | sed`. Redundant: the job's stdout is already the channel, and `run.sh`
+     filters it to `LBM|` lines. Deleted.
+
+  Verified live against a relay: window unmapped but script running; commands served with
+  replies (`(+ 2 3)` → `> 5`, `(get-vin)` → `> 23.41f32`); `:multi` split and serialised;
+  `:stats` and `:ping` answered; half-written lines buffered until newline; disconnect
+  detected and reconnected with the same process serving commands before and after. Still
+  `[UNVERIFIED]`: upload and plot capture.
+
+  Two more things learned the hard way: continuous stats polling is off by default because
+  one record per second buried the command stream, and `pkill -f agent.qml` kills the shell
+  that runs it (its own command line matches). Use `pkill -f 'vesc_tool.*agent[.]qml'`.
+
+- **2026-11-14 (polling correction)** - The earlier claim that GUI polling "runs at 10 Hz
+  and swallows the harness's calls" was wrong on both halves. `pollRateBox` is cosmetic:
+  `Commands::lispGetStats` self-throttles at `mTimeoutCount = 100` × 10 ms, so both the GUI
+  and the harness are capped at 1 request/s no matter what they ask for
+  (`commands.cpp:2244`, `:2371`). Reverse-engineered the real device cost from
+  `vesc/lispBM/lispif.c:210-286`: the reply is ≤300 bytes and cheap, but each request calls
+  `pause_eval(0, 2000)` and suspends the evaluator while walking 32 global-env roots at 1 ms
+  polling granularity. Conclusion changed from "leave it off" to "Poll All is fine" —
+  ~1 Hz of a few-ms jitter. Not measured live: `/dev/ttyACM0` was held by an unrelated
+  `fish-api` process at the time, so this entry is source-derived, not empirical.
+
+- **2026-11-14 (hardware pass, fw 7.0 / 60_MK6 on /dev/ttyACM0)** - Ran the harness end to
+  end against a live ESC through a `--tcpServer` relay. Confirmed working: connect, queued
+  REPL expressions, `set-print-prefix`, stats map, and real values
+  (`(get-vin)` → `23.44f32`, `(get-rpm)` → `0.0f32`).
+
+  Found and fixed a real bug: **REPL replies are dropped under back-to-back sends.** Bursting
+  four expressions answered only the first. The first version of the harness sent every
+  configured expression immediately and used a `<<END>>` sentinel, which does not work: the
+  sentinel arrived while later expressions were still unanswered. Replaced with a serialised
+  queue plus a quiet-window completion detector. Pacing sweep, same expressions each run:
+
+  | Pace | Replies lost |
+  |---|---|
+  | no gap (burst) | 3 of 4 |
+  | 250 ms | every second one |
+  | 700 ms | 0 of 8 |
+  | 1000 ms | 0 of 8 |
+
+  700 ms is the default. Stats polling is not the cause; the boundary is the REPL itself.
+
+  Also verified: `--tcpServer` is a separate headless mode with no main window, so it is not
+  how you start the observable setup; the GUI checkbox is the only way and it is not
+  persisted (a plain launch opens no listener). Still `[UNVERIFIED]`: `uploadPath` and
+  `plot-*` capture.
