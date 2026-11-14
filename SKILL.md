@@ -59,6 +59,15 @@ INIT_FUN(lib_info *info) {
 4. `(stats)` in the terminal gives heap use, GC counters and the GC stack high-water mark —
    the first thing to check when a long-running script behaves oddly or restarts.
 
+### Driving the interpreter from a host script
+
+vesc_tool has **no REPL on the command line**: `--uploadLisp` uploads and runs, but nothing
+prints what the script says and there is no way to evaluate an expression. When a workflow
+has to be automated (CI, an agent, a batch harness), use
+`vesc-tool-harness/SKILL.md`: `vesc_tool --loadQml agent.qml --qmlAutoConn` drives
+`VescIf.commands()` and `CodeLoader` directly, which is exactly what the GUI Lisp page does.
+That directory is **experimental**; read its Refinement log before relying on it.
+
 ## Architecture
 
 ### How It Works
@@ -176,5 +185,7 @@ python3 gen_vesc_c_if_docs.py --header ~/dev/vesc/lispBM/c_libs/vesc_c_if.h
 - `ref/doc/gotchas.md` — Gotchas and caveats
 - `ref/doc/displayref.md` — Display library
 - `ref/doc/dynref.md` — Dynamic loadable functions
+- `vesc-tool-harness/SKILL.md` — **experimental**: running the interpreter headlessly from a
+  host script via `vesc_tool --loadQml`, with `agent.qml` as the starting point
 - `native-extensions/SKILL.md` — C extension development guide
 - `native-extensions/vesc_c_if_api.md` — Auto-generated VESC C interface API reference
