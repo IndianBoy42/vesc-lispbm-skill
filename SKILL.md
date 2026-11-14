@@ -62,11 +62,24 @@ INIT_FUN(lib_info *info) {
 ### Driving the interpreter from a host script
 
 vesc_tool has **no REPL on the command line**: `--uploadLisp` uploads and runs, but nothing
-prints what the script says and there is no way to evaluate an expression. When a workflow
-has to be automated (CI, an agent, a batch harness), use
-`vesc-tool-harness/SKILL.md`: `vesc_tool --loadQml agent.qml --qmlAutoConn` drives
-`VescIf.commands()` and `CodeLoader` directly, which is exactly what the GUI Lisp page does.
-That directory is **experimental**; read its Refinement log before relying on it.
+prints what the script says and there is no way to evaluate an expression.
+
+The way to script it while still watching it is `vesc-tool-harness/SKILL.md`: keep a VESC
+Tool window open on the Scripting page, enable its *TCP Server*, then start the harness
+**once** as a background job. It hides its own window and stays up for the whole session, so
+nothing flashes open and shut; commands are appended to `commands.txt` (`./run.sh send
+'(get-vin)'`) and replies come back on the job's stdout. The window keeps rendering the
+console, plot and stats, so you see what the agent is doing.
+
+That directory is **experimental**; read `vesc-tool-harness/SKILL.md` and its Refinement log
+before relying on it.
+
+Two facts about the device that matter whichever way you drive it:
+
+- `COMM_LISP_GET_STATS` suspends the evaluator (`vesc/lispBM/lispif.c:252` calls
+  `pause_eval(0, 2000)`), so stats polling is jitter in your script's sample period.
+- Nothing can poll it faster than 1 Hz: `Commands::lispGetStats` self-throttles for 1 s
+  (`vesc_tool:commands.cpp:2244`). The GUI's poll-rate spinbox is cosmetic.
 
 ## Architecture
 
@@ -132,8 +145,14 @@ See `ref/` directory for section-by-section language reference extracted from `l
   debugging session.
 
 ### Cost and lifetime of a script
-- Memory: ~2761 cons cells (~22 KB) plus a separate 28 KB pool for arrays and byte buffers
-  (`../lispif.c`). A ring buffer of N floats costs `4*N` bytes of the pool.
+- Memory: 2753 cons cells (22024 B) plus a separate 28672 B pool for arrays and byte
+  buffers (`../lispif.c`). A ring buffer of N floats costs `4*N` bytes of the pool.
+- **The script's code lives in that heap.** Every `defun` body is parsed into cons cells and
+  stays live through its closure, so ~9-12 bytes of source costs one 8-byte cell: a 23 KB
+  script fills the heap and every allocation then pays a full GC. Wrap the definitions in
+  `@const-start` / `@const-end` (the uploaded-script path uses the incremental reader, so it
+  works) and they move to flash instead — 2497 live cells fell to 178 on the bench driver,
+  with no call-time penalty. Full numbers and caveats: `ref/performance-and-memory.md`.
 - The script's globals live in one global environment that outlives the script's own
   thread and is shared with anything else loaded, so prefix names with something script
   specific rather than using `n`, `dt`, `i`.
@@ -180,12 +199,16 @@ python3 gen_vesc_c_if_docs.py --header ~/dev/vesc/lispBM/c_libs/vesc_c_if.h
   budget, and the traps around naming
 - `ref/testing.md` — **how to run a script headlessly** on the bundled x86-64 REPL, how to
   stub the VESC-only functions with a synthetic signal, and the verified gotcha table
+- `ref/performance-and-memory.md` — **the measured cost model**: heap and pool sizes on the
+  ESC, what each construct costs, `@const-start`/`move-to-flash`/`dm` with numbers, the
+  profiling toolkit, and the rules that follow
 - `ref/doc/lbmref.md` — Full language reference
 - `ref/doc/runtimeref.md` — Runtime extensions
 - `ref/doc/gotchas.md` — Gotchas and caveats
 - `ref/doc/displayref.md` — Display library
 - `ref/doc/dynref.md` — Dynamic loadable functions
-- `vesc-tool-harness/SKILL.md` — **experimental**: running the interpreter headlessly from a
-  host script via `vesc_tool --loadQml`, with `agent.qml` as the starting point
+- `vesc-tool-harness/SKILL.md` — **experimental**: drive the interpreter from a host script
+  over a VESC Tool window's TCP server, watching what it does in that window.
+  `run.sh` + `config.json` are the entry points; `agent.qml` is the harness itself
 - `native-extensions/SKILL.md` — C extension development guide
 - `native-extensions/vesc_c_if_api.md` — Auto-generated VESC C interface API reference
