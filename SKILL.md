@@ -219,6 +219,7 @@ python3 gen_vesc_c_if_docs.py --header ~/dev/vesc/lispBM/c_libs/vesc_c_if.h
 - `ref/doc/dynref.md` — Dynamic loadable functions
 - `vesc-tool-harness/SKILL.md` — **experimental**: drive the interpreter from a host script
   over a VESC Tool window's TCP server, watching what it does in that window.
-  `run.sh` + `config.json` are the entry points; `agent.qml` is the harness itself
+  `run.sh ask` is the entry point; `panel.qml` is the visible variant; `fake_vesc.py`
+  tests it all with no hardware
 - `native-extensions/SKILL.md` — C extension development guide
 - `native-extensions/vesc_c_if_api.md` — Auto-generated VESC C interface API reference

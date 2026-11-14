@@ -1,9 +1,10 @@
 # Attaching to a VESC Tool window over TCP (experimental)
 
-> **Status: experimental, partly verified.** Verified on vesc_tool 7.00 with a real TCP
-> server process but no motor controller: config loading, connect, `canFwd`, lifecycle and
-> reconnect all observed. Anything tagged **[UNVERIFIED]** needs a live VESC. When you use
-> this, replace those tags with what you saw and append to the Refinement log.
+> **Status: experimental, but well exercised.** Verified on vesc_tool 7.00: end to end
+> against real hardware (fw 7.0, connect, REPL, stats, values) and, since 2026-11-15, end
+> to end against `fake_vesc.py` with no device at all (connect, `ask`, `:stats`, `:ping`,
+> `:quit`, panel mode, reconnect, fault path). Remaining `[UNVERIFIED]`: `uploadPath` and
+> `plot-*` capture on the fake. Keep appending to the Refinement log as you use it.
 
 ## The idea
 
@@ -101,6 +102,26 @@ If you want the GUI's view *and* a timing-sensitive script, leave the page on Po
 raise the harness's `statsIntervalMs` instead — the harness's replies still populate the
 window's bars.
 
+### If you need a visible panel: run panel.qml, not a second process
+
+The window's TCP server takes exactly one client, so "a panel for me" and "a harness for
+the agent" cannot be two processes: whichever connects second is refused, and the first
+one silently owns the link. A real session hit exactly this — the panel took the slot, the
+agent's REPL sends went nowhere, and the only fix was killing one to free the other.
+
+`panel.qml` is the fix: the full driver plus a visible UI in one process. You interact
+with the panel; `commands.txt` still reaches the same connection. It is a template —
+copy it to your project, replace the UI, keep the `Driver { ... }` root, and you keep
+the whole command protocol. Run it like agent.qml minus the hiding:
+
+```sh
+vesc_tool --loadQml <abs path>/panel.qml --vescPort tcp://127.0.0.1:65102
+```
+
+The file layout is: `Driver.qml` (everything), `agent.qml` (headless entry, hides its
+window), `panel.qml` (visible entry). The entries are three lines each; add behaviour in
+`Driver.qml`, never by forking the driver.
+
 ## Run it as ONE persistent session
 
 Start it once per working session and leave it up. The process hides its own window
@@ -120,22 +141,35 @@ Then, from any later turn:
 
 ```sh
 cd <skill>/vesc-tool-harness
-./run.sh send '(+ 1 2)'
+./run.sh ask '(+ 1 2)'          # send, block for the reply, print the record
 ./run.sh send ':multi (get-vin) ; (get-rpm)'
-./run.sh send '# a comment, ignored'
 ./run.sh send ':upload test.lbm'
-./run.sh send ':ping'
+./run.sh wait '"k":"upload"'    # block until a record matches a pattern
+./run.sh ask '(get-rpm)' 20000  # upload verdicts are slow; raise the budget
 ./run.sh send ':quit'
 ```
 
-Read the replies from the job's streams (`proc://lbmharness`), not from a file. Adding a
-pidfile, `setsid`, or a service manager is redundant: the job facility already owns the
-lifecycle, and a foreground pipeline's `$!` is the *last* stage, so hand-rolled tracking
-reports "not running" while vesc_tool is still alive. That mistake was made and removed.
+**`ask` is the default verb.** It exists because the alternative — `send` followed by a
+guessed `sleep 8` — was measured in a real session to cost the whole timeout for every
+single command. `ask` returns as soon as the reply record lands (≈0.9 s on a local link),
+and fails loudly after its budget instead of silently.
+
+How it works: the daemon tees its filtered output to `harness.log`, and `ask`/`wait` tail
+that file from the byte offset they captured *before* sending, so they can never match an
+older record. Caveat: `ask` assumes the queue is idle when called — the reply it pairs
+with is the first one after the next `tx` record. If several commands are in flight, use
+`wait` on a distinctive pattern instead.
+
+Read the live stream from the job (`proc://lbmharness`); `harness.log` is the same lines
+on disk for cross-shell synchronisation. Adding a pidfile, `setsid`, or a service manager
+is redundant: the job facility already owns the lifecycle, and a foreground pipeline's
+`$!` is the *last* stage, so hand-rolled tracking reports "not running" while vesc_tool is
+still alive. That mistake was made and removed.
 
 Do **not** wrap this in a shell loop that starts a fresh `--loadQml` per command. That is
-what this design replaces: each launch builds a new window and a new TCP connection, and the
-window flashes open and shut.
+what this design replaces: each launch builds a new window and a new TCP connection, and
+the window flashes open and shut. A real session did exactly this 31 times in one
+afternoon and had to work around its own window churn; the launcher is the fix.
 
 ### commands.txt
 
@@ -239,6 +273,7 @@ a caller parses replies without unpacking `|`-separated strings:
 | `cmd` | `line` — a command read from `commands.txt` |
 | `tx` | `expr`, `tag` — sent to the device |
 | `reply` | `tag`, `lines[]`, optional `timeout` |
+| `fault` | `why`, `hint` — two REPL timeouts in a row; the hint names the three known causes (slot taken, stale server, upload in flight) |
 | `stats` | `stats` — the same map the GUI shows |
 | `plot` | `x`, `y` |
 | `upload` | `path`, `ok` |
@@ -322,7 +357,12 @@ and `QmlUi` are context properties from `QmlUi::startCustomGui`
    - pacing at 250 ms lost every second one;
    - **700 ms answered 8/8**, with stats polling both on and off.
 
-   So `agent.qml` serialises: one expression in flight, next one only after the reply has
+   Root cause, firmware side: `COMM_LISP_REPL_CMD` is *silently dropped* when the previous
+   command is younger than half a second — `if (UTILS_AGE_S(repl_time) <= 0.5) return;`
+   (`vesc/lispBM/lispif.c:288-290`). No error, no echo, nothing. That is why 250 ms loses
+   every second one and 700 ms loses none, and why nothing on the host side can fix it.
+
+   So the driver serialises: one expression in flight, next one only after the reply has
    been quiet for `replQuietMs`. Completion is "no output for 700 ms", not "one line", because
    `(print "x")` emits the printed line *and* the echo `> t`. There is no `<<END>>`
    sentinel any more: it was measured to arrive while later expressions were still
@@ -369,10 +409,26 @@ and `QmlUi` are context properties from `QmlUi::startCustomGui`
     down the object tree your script lives in, and the script is never re-injected.
     `agent.qml` owns its own connect timer for this reason. This applies whether or not you
     use TCP.
+12. **A killed client leaves the window's server half-dead.** After a harness or panel is
+    killed (SIGKILL, `timeout`, a `proc://…/kill`), the window's `TcpServerSimple` can end
+    up *accepting* new connections that relay nothing — observed twice on hardware, and it
+    looks exactly like "the VESC stopped answering". Recovery: re-tick
+    *Connection → TCP Server* in the window. Prevention: stop sessions with `:quit` or a
+    clean SIGTERM — `Driver.qml` closes the TCP client from `Component.onDestruction`, and
+    `run.sh ask` after an unclean kill is the fastest way to notice (it times out and says
+    so).
+13. **A crashed vesc_tool leaves `/var/lock/LCK..ttyACM0`.** The window then cannot reopen
+    the serial port and everything downstream looks broken. Removing the lock needs the
+    user's say-so — it is a shared-resource decision, not a debugging step. Ask.
+14. **`vesc_tool` on PATH may be old.** `run.sh` uses `$VESC_TOOL` or `vesc_tool` from
+    PATH. The 6.06 release silently lacks `lispStatsRxMap`, so REPL and `:ping` work while
+    `:stats` never produces a record — verified against both binaries. If stats vanish,
+    check the version first: `vesc_tool --version`, or set
+    `VESC_TOOL=/path/to/vesc_tool_7.00`.
 
 ## Extending the harness
 
-Add to `agent.qml` rather than forking it. The shape is: config block, `log()`, `emit()`,
+Add to `Driver.qml` rather than forking it. The shape is: config block, `log()`, `emit()`,
 `repl()`, `replFile()`, `runBlock()`, `upload()`, `handleLine()`, one connect timer, one poll
 timer, one `Connections` block. To add a command, extend `handleLine()`; to add an event,
 emit a new `k`.
@@ -390,12 +446,34 @@ Wanted next, roughly in order:
 - A small file-replay queue: drop `*.lbm` into a watched directory and upload each in turn.
 - Read-back diff: erase nothing, `lispReadWithPath()`, and compare against the local file so
   an agent can tell whether the device matches the repo.
-- `replSync(expr)` returning a promise resolved by the quiet-window detector, so a command
-  file could carry a correlation id and callers need not match on order.
 - Probe whether a *host-side* delay is really required, or whether the loss comes from
   `lispSendReplCmd` queueing inside `Commands`. If a reply-driven schedule alone suffices,
   drop `replPaceMs` to 0 and the round trip halves.
 - `scanCan()` / `getCanDevsLast()` plus per-device prefixes, for multi-VESC benches.
+
+## Testing without hardware
+
+Two layers, both already in this tree:
+
+1. **`fake_vesc.py` in this directory** — a TCP server speaking the real packet protocol
+   (start byte, length, CRC-16/CCITT, stop byte), answering `COMM_FW_VERSION`,
+   `COMM_LISP_REPL_CMD`, `COMM_LISP_GET_STATS`, `COMM_LISP_SET_RUNNING`. The harness
+   attaches to it exactly as it would to your window, so connect, `ask`, `:stats`,
+   `:ping`, `:quit`, reconnect and the fault path can all be exercised with no device:
+
+   ```sh
+   python3 fake_vesc.py 65199 &
+   VESC_TOOL=<vesc_tool_7.00> xvfb-run -a ./run.sh 127.0.0.1 65199   # as a background job
+   ./run.sh ask '(+ 1 2)'
+   ```
+
+   Extend a handler when a test needs it; do not add realism you will not assert on. One
+   trap it already encodes for you: every reply starts with its own command id —
+   forgetting that byte makes vesc_tool connect but never accept the firmware version.
+2. **Host dry-run of the script itself** — `ref/testing.md` in the parent skill: stub the
+   VESC-only functions and run the `.lbm` in the bundled x86-64 REPL before ever
+   uploading. A real session used exactly this (`host/stubs_probe.lisp`) and it caught
+   protocol bugs with zero hardware.
 
 ## Why not the alternatives
 
@@ -476,3 +554,41 @@ changed. Drop the `[UNVERIFIED]` tags as they get confirmed.
   how you start the observable setup; the GUI checkbox is the only way and it is not
   persisted (a plain launch opens no listener). Still `[UNVERIFIED]`: `uploadPath` and
   `plot-*` capture.
+
+- **2026-11-15 (learnings from a real agent session + no-hardware verification)** - Read
+  the "Research Feetech servo TTL protocol" session end to end (2026-11-14, 10:43-16:10)
+  and folded in what it cost that session to learn:
+
+  1. It never ran `run.sh`, hand-rolling four throwaway harness instances
+     (`lbm-harness`, `lbm-bench`, `lbm-bench2`, `lbm-diag`) instead.
+  2. It launched `vesc_tool --loadQml` 31 times, one per bash call, each opening a
+     "VESC Custom GUI" window that closed when the call ended.
+  3. Its command loop was `cat >> commands.txt && sleep 8` — no reply correlation.
+  4. Its own panel and its REPL probe fought over the single TCP slot ("The panel holds
+     the TCP slot, so those sends went nowhere").
+  5. A killed client left the window's server accepting-but-not-relaying.
+
+  Changes made for each: `run.sh ask`/`wait` with a tee'd `harness.log` (3); `panel.qml`
+  so one process is both panel and driver (4); a `fault` record naming the three causes
+  of a silent link plus `STATE|suspect` (5, partly); `Driver.qml` closes the TCP client
+  from `Component.onDestruction` and `:quit` (5); constraints 12-14 document the stale
+  server, the serial lock file, and the 6.06-binary `lispStatsRxMap` gap; the REPL gate
+  got its firmware root cause (`lispif.c:288-290`); `fake_vesc.py` shipped.
+
+  Everything above was then verified without hardware, against `fake_vesc.py` with
+  `vesc_tool_700` under Xvfb: connect and stay connected; `ask` returns the reply record
+  in 0.85 s; `:stats` returns the parsed map; `:ping`; `:quit` closes the TCP client and
+  exits 0; `panel.qml` loads, connects, and serves `commands.txt`; killing the fake
+  triggers disconnect/reconnect; a mute fake (fw handshake but no REPL replies) produces
+  two `timeout:true` replies and then the `fault` record with the hint.
+
+  Two testing traps found while doing that: passing a regex through `awk -v` eats its
+  escapes (the first `ask_scan` matched the `tx` line itself — now literal `index()`
+  matching), and `run.sh` picked the 6.06 `vesc_tool` from PATH, where `lispStatsRxMap`
+  does not exist — REPL worked, stats silently did not. That binary gap is now
+  constraint 14.
+
+  The fake also encoded one protocol lesson the hard way: replies must start with their
+  own command id. Without it, `fwVersionReceived` never fires, `isPortConnected()` still
+  reads true (it only means the TCP socket is up), and VESC Tool just keeps polling until
+  "No firmware read response" — a failure that looks like a dead device.

@@ -4,3 +4,4 @@ out.jsonl
 daemon.log
 daemon.pid
 config.json
+harness.log

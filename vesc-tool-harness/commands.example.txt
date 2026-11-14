@@ -1,5 +1,7 @@
 # Commands for the persistent session. Copy to commands.txt, or append with
-#   ./run.sh send '<expression>'
+#   ./run.sh send '<expression>'      fire and forget
+#   ./run.sh ask '<expression>'       send, block for the reply, print it
+#   ./run.sh wait '"k":"stats"'       block until a matching LBM| line
 # Every line is handled in order; replies appear on the job's stdout.
 
 # A plain expression goes to the REPL.
@@ -20,5 +22,6 @@
 # Liveness check: {k:"pong", connected:true}
 :ping
 
-# Exit the session.
+# Exit the session. Closes the TCP client cleanly first, so the window's
+# single-slot server does not go stale.
 # :quit
