@@ -101,6 +101,21 @@ i.e. +1856 B per boot for a 1.8 KB block. The pointer saved at image creation is
 on boot and the block is read again from the same code in flash, so the new copy lands
 after the old one; the old copy is dead but unreclaimed.
 
+### What an upload costs, and why it is not the const heap's fault
+
+Every LispBM upload calls `COMM_LISP_ERASE_CODE`, which stops LispBM and erases **both**
+the const region and the code region before streaming a byte (`comm/commands.c:1403`),
+and the first stream chunk runs the whole restart and parse **synchronously** before
+acking (`lispBM/lispif.c:494`). The host allows 8 s for the erase ack and 4 s per chunk
+ack (`vesc_tool/codeloader.cpp`).
+
+Measured on a stable link: a 7 KB script uploads in 2.9 s, a 10 KB one in 3.1-3.5 s,
+identical with and without a const block. A four-way test (const vs heap × two files,
+spaced) succeeded 4/4, each parsing its full length; three back-to-back uploads failed
+3/3, again regardless of const blocks. Failures come from the host link dropping while
+the device is blocked (52 disconnects seen in one attempt), not from const data. Keep
+uploads small and spaced, and never queue REPL commands behind one.
+
 Consequences for a ~23 KB driver: roughly **5 reboots** fit in the 128 KiB region. When the
 region fills, the const write fails, `lispif` erases the const region on the next restart
 (`lispif.c:710`) and rebuilds it — a slower boot plus a flash erase cycle, self-healing but
