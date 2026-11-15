@@ -210,6 +210,12 @@ python3 gen_express_extensions.py --express-root ~/dev/vesc_express
 - `ref/NN-*.md` — Individual sections from lbmref.md
 - `ref/vesc-esc-extensions.md` — the ESC-side API map, where to look up a name, memory
   budget, and the traps around naming
+- `ref/can-commands.md` — **CAN commands end to end**: the rx order (`decode_msg` before any
+  Lisp copy), wire format and address matching, observing frames from Lisp with
+  `can-recv-*`/`event-can-*` and the traps that make them unreliable samplers, and
+  intercepting `SET_RPM`/`SET_POS` with a native lib's `can_set_eid_cb` to run your own
+  control loop instead of the built-in PID. Read before writing anything that reacts to CAN
+  or replaces firmware motor control
 - `ref/vesc-express-extensions.md` — **generated**: every name the Express firmware
   registers (display, WiFi/TCP, BLE, NVS, crypto, board `hwconf`), with the C handler,
   signature comment where the source has one, and file:line. Express-only names are not
