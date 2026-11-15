@@ -201,12 +201,19 @@ python3 gen_ref.py --lispbm-root ~/dev/vesc/lispBM/lispBM
 
 # VESC C interface API docs from vesc_c_if.h
 python3 gen_vesc_c_if_docs.py --header ~/dev/vesc/lispBM/c_libs/vesc_c_if.h
+
+# Express extension tables from a vesc_express checkout
+python3 gen_express_extensions.py --express-root ~/dev/vesc_express
 ```
 
 - `ref/INDEX.md` — Master index of all language sections
 - `ref/NN-*.md` — Individual sections from lbmref.md
 - `ref/vesc-esc-extensions.md` — the ESC-side API map, where to look up a name, memory
   budget, and the traps around naming
+- `ref/vesc-express-extensions.md` — **generated**: every name the Express firmware
+  registers (display, WiFi/TCP, BLE, NVS, crypto, board `hwconf`), with the C handler,
+  signature comment where the source has one, and file:line. Express-only names are not
+  on an ESC, so check here before assuming a function exists on both
 - `ref/testing.md` — **how to run a script headlessly** on the bundled x86-64 REPL, how to
   stub the VESC-only functions with a synthetic signal, and the verified gotcha table
 - `ref/performance-and-memory.md` — **the measured cost model**: heap and pool sizes on the

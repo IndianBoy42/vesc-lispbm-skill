@@ -22,6 +22,16 @@
 # Liveness check: {k:"pong", connected:true}
 :ping
 
+# CAN. One attached ESC relays to the nodes behind it; every reply carries
+# "can": <id> (-1 = the attached device). Start with a scan.
+:can scan
+:can 2                      # session target, also sets a print prefix
+(get-vin)                   # ...so this runs on node 2
+:can 7 (get-temp-fet 0)     # one-shot on node 7, session target unchanged
+:can all (get-vin)          # every discovered node, serialised
+:can upload 2 probe.lbm     # erase + upload + run on node 2
+:can off                    # back to the attached device
+
 # Exit the session. Closes the TCP client cleanly first, so the window's
 # single-slot server does not go stale.
 # :quit

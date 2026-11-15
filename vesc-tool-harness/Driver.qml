@@ -58,6 +58,14 @@ Item {
     // requests one sample on demand.
     property bool   stayConnected: false
 
+    // ---- CAN --------------------------------------------------------------
+    // -1 = the device the window is attached to. >= 0 = that CAN node: every
+    // command is wrapped in COMM_FORWARD_CAN and the node's replies come back
+    // through the attached ESC (vesc/comm/commands.c:731). One mCanId exists,
+    // so the queue serialises: target is applied per item, never mid-flight.
+    property int    canTarget: -1
+    property var    canIds: []
+
     // ---- connection -------------------------------------------------------
     property string port: ""
     property int    canFwd: -1
@@ -174,14 +182,27 @@ Item {
     property string replTag: ""
     property int    replTimeouts: 0
     property int    replLastTx: 0
+    // Target of the command in flight, so replies and stats can be attributed.
+    property int    replCan: -1
+    property int    statsCan: -1
 
-    function repl(expr, tag) {
-        replQueue = replQueue.concat([{ e: expr, tag: tag === undefined ? "" : tag }])
+    // Point the shared Commands at one node. Called only when nothing is in
+    // flight, because a late reply would otherwise be attributed to the wrong
+    // node.
+    function applyTarget(id) {
+        if (!cmd) return
+        if (id >= 0) cmd.setSendCan(true, id)
+        else cmd.setSendCan(false, 0)
+    }
+
+    function repl(expr, tag, can) {
+        var t = (can === undefined) ? root.canTarget : can
+        replQueue = replQueue.concat([{ e: expr, tag: tag === undefined ? "" : tag, can: t }])
         pumpRepl()
     }
 
     function pumpRepl() {
-        if (replBusy || replQueue.length === 0) return
+        if (replBusy || uploading || replQueue.length === 0) return
         if (!cmd || !VescIf.isPortConnected()) return
 
         var now = Date.now()
@@ -193,9 +214,11 @@ Item {
         replBusy = true
         replReply = []
         replTag = item.tag
+        replCan = item.can
         replLastTx = now
-        log("TX", item.e)
-        emit({ k: "tx", expr: item.e, tag: item.tag })
+        applyTarget(item.can)
+        log("TX", (item.can >= 0 ? "[can " + item.can + "] " : "") + item.e)
+        emit({ k: "tx", expr: item.e, tag: item.tag, can: item.can })
         cmd.lispSendReplCmd(item.e)
     }
 
@@ -222,15 +245,35 @@ Item {
 
     property string pendingUpload: ""
     property bool   uploading: false
+    property var    uploadQueue: []
 
-    function upload(path) {
+    // Uploads block in nested event loops, so they get their own queue: a
+    // REPL item must never be sent while a script is being written.
+    function enqueueUpload(path, can) {
+        var t = (can === undefined) ? root.canTarget : can
+        uploadQueue = uploadQueue.concat([{ p: path, can: t }])
+        pumpUploads()
+    }
+
+    function pumpUploads() {
+        if (uploading || replBusy || uploadQueue.length === 0) return
+        if (!cmd || !VescIf.isPortConnected()) return
+        var it = uploadQueue[0]
+        uploadQueue = uploadQueue.slice(1)
+        applyTarget(it.can)
+        upload(it.p, it.can)
+    }
+
+    function upload(path, can) {
         uploading = true
-        log("STATE", "upload " + path)
+        log("STATE", "upload " + path + (can >= 0 ? " [can " + can + "]" : ""))
         var ok = loader.lispUploadFromPath(path, root.reduceLisp)
         log("STATE", "upload " + (ok ? "ok" : "FAILED"))
-        emit({ k: "upload", path: path, ok: ok })
+        emit({ k: "upload", path: path, ok: ok, can: can })
         if (ok) cmd.lispSetRunning(1)
         uploading = false
+        pumpUploads()
+        pumpRepl()
         maybeFinish()
     }
 
@@ -239,6 +282,7 @@ Item {
     function maybeFinish() {
         if (mode !== "once" || !quitWhenDone) return
         if (replBusy || replQueue.length > 0) return
+        if (uploadQueue.length > 0) return
         if (pendingUpload !== "" || uploading) return
         log("STATE", "queue drained, exiting")
         Qt.quit()
@@ -260,6 +304,15 @@ Item {
     //   :run <path>           evaluate a file
     //   :upload <path>        erase + upload + run, path relative to this dir
     //   ":multi <a> ; <b>"    queue several expressions, split on ' ; '
+    //   :stats                one stats sample from the current target
+    //   :ping                 local liveness check
+    //   :quit                 exit
+    //   :can scan             enumerate CAN nodes -> {k:"can", ids:[...]}
+    //   :can off              target the attached device again
+    //   :can <id>             make <id> the target for following commands
+    //   :can <id> <expr>      run <expr> on <id> only, session target unchanged
+    //   :can all <expr>       run <expr> on every discovered node, one at a time
+    //   :can upload <id> <p>  erase + upload + run <p> on <id>
     //   # ...                 comment, ignored
     function handleLine(line) {
         var s = line.replace(/^\s+|\s+$/g, "")
@@ -268,13 +321,19 @@ Item {
         emit({ k: "cmd", line: s })
 
         if (s.indexOf(":upload ") === 0) {
-            upload(resolve(s.substring(8).replace(/^\s+|\s+$/g, "")))
+            enqueueUpload(resolve(s.substring(8).replace(/^\s+|\s+$/g, "")))
         } else if (s.indexOf(":run ") === 0) {
             replFile(s.substring(5).replace(/^\s+|\s+$/g, ""))
         } else if (s.indexOf(":multi ") === 0) {
             var parts = s.substring(7).split(" ; ")
             for (var i = 0; i < parts.length; i++) repl(parts[i])
+        } else if (s === ":can off") {
+            canTarget = -1
+            emit({ k: "can", target: -1 })
+        } else if (s.indexOf(":can ") === 0) {
+            handleCan(s.substring(5).replace(/^\s+|\s+$/g, ""))
         } else if (s === ":stats") {
+            statsCan = canTarget
             cmd.lispGetStats(true)
             // The reply arrives asynchronously; emit() is driven by the signal.
         } else if (s === ":ping") {
@@ -286,6 +345,59 @@ Item {
         } else {
             repl(s)
         }
+    }
+
+    // `:can` sub-commands. Prints are prefixed per node with set-print-prefix so
+    // that several nodes printing into one console stay separable; that is also
+    // why `all` costs two round trips per node.
+    function handleCan(rest) {
+        if (rest === "scan" || rest === "") {
+            var ids = VescIf.scanCan()
+            canIds = []
+            for (var k = 0; k < ids.length; k++) canIds.push(ids[k])
+            log("CAN", "scan -> [" + canIds.join(",") + "]")
+            emit({ k: "can", ids: canIds })
+            return
+        }
+
+        var m = rest.match(/^(\d+)\s*(.*)$/)
+        if (m) {
+            var id = parseInt(m[1])
+            var tail = m[2]
+            if (tail === "") {
+                canTarget = id
+                emit({ k: "can", target: id })
+                repl("(set-print-prefix \"can" + id + "| \")", "", id)
+                return
+            }
+            repl(tail, "", id)
+            return
+        }
+
+        if (rest.indexOf("upload ") === 0) {
+            var parts = rest.substring(7).match(/^(\d+)\s+(.+)$/)
+            if (parts) enqueueUpload(resolve(parts[2]), parseInt(parts[1]))
+            return
+        }
+
+        if (rest.indexOf("all ") === 0) {
+            var expr = rest.substring(4)
+            if (canIds.length === 0) {
+                var found = VescIf.scanCan()
+                canIds = []
+                for (var j = 0; j < found.length; j++) canIds.push(found[j])
+                emit({ k: "can", ids: canIds })
+            }
+            for (var i = 0; i < canIds.length; i++) {
+                var cid = canIds[i]
+                repl("(set-print-prefix \"can" + cid + "| \")", "", cid)
+                repl(expr, "", cid)
+            }
+            return
+        }
+
+        log("CAN", "unrecognised: " + rest)
+        emit({ k: "fault", why: "bad :can command", hint: ":can scan|off|<id>|<id> <expr>|all <expr>|upload <id> <path>" })
     }
 
     function resolve(p) {
@@ -334,9 +446,10 @@ Item {
         repeat: false
         onTriggered: {
             if (!root.replBusy) return
-            emit({ k: "reply", tag: root.replTag, lines: root.replReply })
+            emit({ k: "reply", tag: root.replTag, can: root.replCan, lines: root.replReply })
             log("REPL", "done (" + root.replReply.length + " line(s))")
             root.replBusy = false
+            pumpUploads()
             pumpRepl()
             maybeFinish()
         }
@@ -350,20 +463,28 @@ Item {
         onTriggered: {
             if (!root.replBusy || replQuietTimer.running) return
             root.replTimeouts++
-            emit({ k: "reply", tag: root.replTag, lines: root.replReply, timeout: true })
+            emit({ k: "reply", tag: root.replTag, can: root.replCan, lines: root.replReply, timeout: true })
             log("REPL", "timeout: no output in " + root.replTimeoutMs + "ms")
 
             // A silent link has exactly three known causes, and none of them
             // is the expression. Say so instead of leaving the caller to
             // debug a script that never ran.
             if (root.replTimeouts === 2) {
-                emit({ k: "fault", why: "repl timeout x2",
-                       hint: "no REPL output for two commands in a row. Either another " +
-                             "client holds the window's single TCP slot (a panel, a " +
-                             "second harness), the window's TCP server went stale after " +
-                             "a client was killed (re-tick Connection -> TCP Server), or " +
-                             "the device is mid-upload." })
-                log("STATE", "suspect: TCP slot taken / stale server / upload in flight")
+                // A silent link has a short list of causes. Which list depends
+                // on whether the command was addressed to a CAN node.
+                var hint = root.replCan >= 0
+                    ? "no reply from CAN node " + root.replCan + " twice. Either that id is " +
+                      "not on the bus (run :can scan), the node is unpowered or on a " +
+                      "different bitrate, or the forwarding ESC lost the link."
+                    : "no REPL output for two commands in a row. Either another " +
+                      "client holds the window's single TCP slot (a panel, a " +
+                      "second harness), the window's TCP server went stale after " +
+                      "a client was killed (re-tick Connection -> TCP Server), or " +
+                      "the device is mid-upload."
+                emit({ k: "fault", why: "repl timeout x2", can: root.replCan, hint: hint })
+                log("STATE", "suspect: " + (root.replCan >= 0
+                    ? "CAN node " + root.replCan + " absent / wrong id"
+                    : "TCP slot taken / stale server / upload in flight"))
             }
 
             root.replBusy = false
@@ -412,7 +533,8 @@ Item {
                 log("STATE", "connected")
 
                 if (root.canFwd >= 0) {
-                    root.cmd.setSendCan(true, root.canFwd)
+                    root.canTarget = root.canFwd
+                    root.applyTarget(root.canTarget)
                     log("STATE", "canFwd " + root.canFwd)
                 }
                 if (root.pendingUpload !== "") {
@@ -440,7 +562,7 @@ Item {
             }
         }
         function onLispRunningResRx(ok) { log("RUNNING", ok) }
-        function onLispStatsRxMap(stats) { emit({ k: "stats", stats: stats }) }
+        function onLispStatsRxMap(stats) { emit({ k: "stats", can: root.statsCan, stats: stats }) }
         function onPlotInitReceived(xLabel, yLabel) { log("PLOTINIT", xLabel + "|" + yLabel) }
         function onPlotDataReceived(x, y) { emit({ k: "plot", x: x, y: y }) }
         function onLispStreamCodeRx(offset, res) { log("STREAM", offset + "|" + res) }

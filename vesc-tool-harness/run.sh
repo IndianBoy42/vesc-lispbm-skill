@@ -7,6 +7,8 @@
 #   ./run.sh send '<expr>'            queue one command into a running session
 #   ./run.sh ask '<expr>' [timeout]   send one command, block for its reply,
 #                                     print the record. No more sleep-guessing.
+#                                     Matches reply/fault/can/pong records; for
+#                                     :stats and :upload use `wait` on the record.
 #   ./run.sh wait '<regex>' [timeout] block until a matching LBM| line appears
 #   ./run.sh wait -a '<regex>'        ...search the whole log, not just new lines
 #
@@ -60,10 +62,14 @@ ask_scan() {
     local off="$1"
     tail -c +"$((off + 1))" -- "$LOG" 2>/dev/null \
         | awk '
+            # can/pong are answered by the command itself, so they need no tx
+            # marker. reply/fault must follow a tx, or a late answer to an
+            # earlier command would be paired with this one.
             index($0, "\"k\":\"tx\"") { seen_tx = 1 }
-            seen_tx && (index($0, "\"k\":\"reply\"") || index($0, "\"k\":\"fault\"")) {
-                print; exit
-            }'
+            seen_tx && (index($0, "\"k\":\"reply\"") ||
+                        index($0, "\"k\":\"fault\"")) { print; exit }
+            index($0, "\"k\":\"can\"") ||
+            index($0, "\"k\":\"pong\"") { print; exit }'
 }
 
 ask() {

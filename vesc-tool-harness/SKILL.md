@@ -122,6 +122,66 @@ The file layout is: `Driver.qml` (everything), `agent.qml` (headless entry, hide
 window), `panel.qml` (visible entry). The entries are three lines each; add behaviour in
 `Driver.qml`, never by forking the driver.
 
+## Multiple VESCs and Express over one CAN bus
+
+One mechanism covers all of it: `COMM_FORWARD_CAN` (34). Every LispBM packet is a normal
+VESC command, so `Commands::emitData` wraps it in `[COMM_FORWARD_CAN, id]`
+(`vesc_tool:commands.cpp:2392-2397`) and the attached ESC relays it
+(`vesc/comm/commands.c:731-745`). Replies, `print` output, stats and upload acks come back
+through the same ESC, so a single harness process drives the whole bus and still occupies
+only the one TCP slot.
+
+Numbers that shape the design:
+
+| Item | Value |
+|---|---|
+| Max payload per forwarded packet | 512 B (`vesc/comm/packet.h:28`) |
+| Fragmentation | 7 bytes/frame, then 6 bytes/frame above 256 B (`comm_can.c:443-500`) |
+| Concurrent large transfers per node | 3 RX buffers (`RX_NUM = 3`) |
+| A 384-byte LispBM write chunk | ~55 CAN frames |
+| `:can all` | 2 round trips per node (print prefix + expression) |
+
+VESC Express is a normal node: its `controller_id` is a config value
+(`vesc_express:main/config/settings.xml:28`, 1-254), it answers `CAN_PACKET_PING/PONG`
+(`main/comm_can.c:289,1337`), it handles `COMM_FORWARD_CAN` itself (`main/commands.c:378`)
+and it registers its own LispBM command set (`main/commands.c:820-892`). Its extension
+surface differs from an ESC — see `ref/vesc-express-extensions.md` in the parent skill.
+
+### Commands
+
+| Line | Effect |
+|---|---|
+| `:can scan` | ping sweep; emits `{k:"can", ids:[…]}` |
+| `:can <id>` | make `<id>` the session target, and set `(set-print-prefix "can<id>| ")` on it |
+| `:can <id> <expr>` | run one expression there; session target unchanged |
+| `:can all <expr>` | prefix + expression on every discovered node, serialised |
+| `:can upload <id> <path>` | erase + upload + run on that node |
+| `:can off` | back to the attached device |
+
+Every `tx`, `reply`, `upload` and `stats` record carries `can: <id>` (`-1` = attached
+device), so a caller never has to infer the source from ordering. That matters because
+`Commands` has exactly one `mCanId`: the driver applies the target per queue item and only
+between commands, so a late reply can never be attributed to the next node.
+
+Prints are the other attribution channel. If several nodes print, each needs its own
+prefix (`vesc/lispBM/README.md:139`, ≤50 bytes, fw 6.06+); `:can <id>` sets one, and
+`:can all` sets one per node before its expression.
+
+Uploads over CAN are the expensive operation, not the REPL: 55 frames per 384-byte chunk,
+and a node only has 3 reassembly buffers. Space uploads and never queue anything behind
+one — the driver's upload queue already enforces that.
+
+### Verified, without a bus
+
+`fake_vesc.py --nodes=1,2,3` plays the attached ESC and the nodes behind it (forwarded
+packets are dispatched per id, replies are returned unwrapped, unknown ids stay silent).
+Against it: `:can scan` → `[1,2,3]`; `:can 2` then a bare expression → `{"can":2,
+"lines":["> node2:4f32"]}`; `:can all` → one reply each for `can:1`, `can:2`, `can:3`;
+`:can upload 3` → `{"k":"upload","ok":true,"can":3}` with the fake logging forwarded
+erase/write packets; `:can off` → a bare expression answers with `can:-1`. **Not yet run
+against a real CAN bus**: bitrate, termination, duplicate ids and per-node upload timing
+still need hardware.
+
 ## Run it as ONE persistent session
 
 Start it once per working session and leave it up. The process hides its own window

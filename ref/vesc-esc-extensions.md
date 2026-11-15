@@ -14,6 +14,9 @@ for it is:
 - `../lispif.c`: heap sizing and the `image`/`env` handling for stored scripts.
 - `../lispBM/lispBM/doc/runtimeref.md`: the runtime extensions that come from lispBM
   itself (buffers, arrays, strings, plotting primitives, `import`, ...).
+- `ref/vesc-express-extensions.md`: the **Express side** of the same surface, generated from
+  the vesc_express sources. A name there is not automatically available here, and vice
+  versa: check both before claiming a function exists.
 
 Verify a name exists before relying on it (the README and the firmware version on the
 bench can disagree):
