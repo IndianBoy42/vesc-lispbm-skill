@@ -151,6 +151,17 @@ See `ref/` directory for section-by-section language reference extracted from `l
 - **`bufget-f32`/`bufset-f32` index in bytes**, not elements: element `i` is at `(* 4 i)`.
 - **`mod` follows the sign of the dividend**; add the modulus before the `mod` if the result
   must be non-negative.
+- **`loopwhile-thd` takes three arguments:** `(loopwhile-thd <stack-size>
+  <cond> <body>)`, e.g. `(loopwhile-thd 100 t { ... })`. It is not
+  `(loopwhile-thd t body)`.
+- **`ext-` names are reserved.** `defun` of anything starting with `ext-`
+  errors with "Cannot redefine built-in", even on the host REPL — the
+  firmware binds those symbols at `load-native-lib`. Stub them under
+  different names for host tests.
+- **Extension functions run on a 2048-byte C stack** (the evaluator
+  thread's). No newlib trig, no `%f` printf, no deep call chains — see
+  `ref/performance-and-memory.md`, which also covers the one-packet
+  recovery for a crash-looping device.
 - The full verified table, with symptoms, is in `ref/testing.md`. Read it before a long
   debugging session.
 

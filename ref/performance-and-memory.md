@@ -29,6 +29,37 @@ exists to carve out a compactable region inside it.
 
 Both are fixed at compile time. A script cannot grow them; it can only use less.
 
+### The evaluator's C stack (extension writers, read this first)
+
+The LispBM evaluator thread runs on a **2048-byte C stack** (`lispif.c:73`,
+`eval_thread_wa`). Every extension function called from lisp executes on
+it. A call chain that needs more than that corrupts the thread: the REPL
+stops answering while the console keeps flushing prints, a stored image
+restart-loops, and a firmware reboot follows. Verified on hardware with
+an extension doing newlib trig (`cosf` -> `__ieee754_rem_pio2f` ->
+`__kernel_rem_pio2f`, which has large stack locals) plus `%f` printf
+(doubles): it wedged the evaluator on the first call.
+
+Rules for `ext-*` entry points:
+
+- No newlib trig; no `printf` with `%f`/doubles (integer formats only).
+- No deep call chains — keep entry points flat.
+- Long-running or allocation-heavy work goes in your own
+  `VESC_IF->spawn` thread, which has its own stack and is not bound by
+  this. Drive it from a shallow ext function.
+
+Side benefit, measured: dropping newlib trig and double printf halved the
+extension binary (11.5 -> 6.5 KiB) — libm machinery is the bulk of a
+small extension.
+
+Related: if a crash already stored in the image makes the device
+reboot-loop on USB (enumerates ~1 s, drops, repeats), a full upload
+cannot fit the window, but a single `COMM_LISP_ERASE_CODE` (132) packet
+can: open `/dev/ttyACM*` the moment it appears and send it; retry each
+cycle until the device stays enumerated, then re-upload. The port must be
+free (stop any relay/GUI holding it) and the packet is
+`[0x02 0x01 0x84 crc_hi crc_lo 0x03]` (CRC16-XMODEM of the payload).
+
 ## 2. Where a script's bytes actually go
 
 Every `defun` body is parsed into cons cells, and the closure keeps them live for as long

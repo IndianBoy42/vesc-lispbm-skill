@@ -97,6 +97,7 @@ Each of these cost real debugging time; all were reproduced in this checkout.
 | A global counter shared with a spawned thread does not advance | It does work; check that the thread is still alive first. A raised error kills only that thread, and the driver's output goes on. |
 | Printed numbers are `1.500000f32` on the host | The host build is 64-bit lispBM with float32 values; the ESC is the same float32 (`lbm_float = float`). Both are single precision, which is what a numeric script has to be designed for. |
 | Every wire timing comes out 10× too small | `systime` ticks are **100 µs** on the ESC (10 kHz), and a real session measured "ms" that were ticks for an hour before noticing. Calibrate first: read `systime` twice around a known host-side delay and divide. Never assume the unit. |
+| `eval_error`, "Cannot redefine built-in" when stubbing | **`ext-` names and the REPL's own built-ins (`sleep`, `load-native-lib`, ...) cannot be `defun`'d.** `ext-` symbols are reserved for native extensions even when unbound. Stub VESC-only calls under different names and reference them from a copy of the script. |
 
 Types and literals (from `ref/02-numbers-and-numerical-types.md`): an integer literal is a
 28-bit `i` (56-bit on the host build), a literal with a decimal point is `f32`, and other
