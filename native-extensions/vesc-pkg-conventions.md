@@ -89,6 +89,51 @@ INIT_FUN(lib_info *info) {                // -> bool __attribute__((section(".in
   a second TU shifts `.init_fun` and breaks `PROG_ADDR` for every TU but the
   first.
 
+### Generating the settings page (`--xmlConfToCode`), learned the hard way
+
+`vesc_tool --xmlConfToCode conf/settings.xml` reads only the XML; it does
+**not** read your `datatypes.h`, and it emits
+`confparser.{c,h}`, `confxml.{c,h}` and `conf_default.h` next to the XML.
+What it needs, and what silently produces an empty config if missing:
+
+1. **A hand-written `conf/datatypes.h`** with `typedef struct {...} TailConfig;`
+   next to the XML. The generated parser `#include "datatypes.h"` and uses
+   the struct type named by `<config_name>`; it also wants a `buffer.h` with
+   `buffer_append_{uint32,int16,float16}` / `buffer_get_*` (big-endian) and a
+   `conf_general.h` (the generated `.c` includes both).
+2. `<config_name>` with `<type>3</type>` (QSTRING) and
+   `<valString>TailConfig</valString>`. Any other type silently falls back to
+   a struct called `device_config`.
+3. **`<SerOrder>`**, a sibling of `<Params>`, listing every serialized field
+   as `<ser>name</ser>`. Without it the parser has an empty field list:
+   `SERIALIZED_CONFIG_LENGTH` comes out as 4 (the signature only) and
+   nothing is generated for the page. A name in `<SerOrder>` that is absent
+   from `<Params>` prints `"name" not found`.
+4. Type codes: `1` double, `2` int, `3` QString, `4` enum, `5` bool,
+   `6` bitfield (`CFG_T` in the tool's `datatypes.h`). `vTx` codes:
+   `1` uint8, `2` int8, `3` uint16, `4` int16, `5` uint32, `6` int32,
+   `7` double16, `8` double32, `9` double32_auto. A double without a
+   double16/32 `vTx` prints `Serialization type not supported`.
+5. **Doubles are 16-bit fixed point**: `(int16_t)(value * vTxDoubleScale)`.
+   So `|value| * scale <= 32767` for the whole UI range, and the scale is
+   both the precision and the range budget. Pick per parameter; a range
+   spanning five decades cannot survive, so narrow the UI range and keep
+   the wider C clamp in code. Saturation in your own `buffer_append_float16`
+   keeps an out-of-range value from wrapping to the wrong sign.
+6. Defaults are printed with 6 significant digits, so the generated
+   `confparser_set_defaults_*` can differ from a C literal in the 6th digit.
+   A unit test comparing XML defaults against C defaults needs ~2e-5
+   relative tolerance, which still catches real drift.
+7. `get_cfg_xml` returns the blob as `data_tailconfig_ + PROG_ADDR` — the
+   address in the image is link-time (0-relative). Keep the array `const`
+   (patch the generated `.c`, or it lands in `.data`, which a flash image
+   must not have) and prove the pointer on hardware by checksumming
+   `len` bytes at it against the ELF.
+8. The callbacks must be in flash or RAM: the firmware validates them with
+   `utils_is_func_valid` (0x08000000..+1MB flash, 0x20000000..+128KB RAM,
+   0x10000000..+64KB CCM). Registration is silent when it fails, and
+   `COMM_GET_CUSTOM_CONFIG` (93) then never answers.
+
 ## 3. Config, telemetry and logging (the parts most extensions forget)
 
 - **Config page for VESC Tool**: `conf_custom_add_config(get_cfg, set_cfg,
