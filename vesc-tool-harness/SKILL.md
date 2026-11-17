@@ -61,15 +61,24 @@ never dispatched `COMM_GET_CUSTOM_CONFIG` to the extension, which is what
 hides the page in the GUI; `hasB0`/`b0`/`b0Min`/`b0Max` then show whether the
 page's defaults and ranges arrived intact.
 
-**Killing a client wedges the server until the box is re-ticked.** The window's
-server keeps the accept state of a client whose socket was closed under it
-(the usual case: the harness process is killed so another client can use the
-port). Afterwards it still *accepts* connections but forwards nothing: even
-`COMM_FW_VERSION` gets no reply, so the symptom looks like a dead VESC. Do not
-try to repair it from QML -- `VescIf.tcpServerStart/Stop()` in the harness
-process acts on that process's own server, not the window's, and starting one
-on an occupied port just fails. Untick and re-tick **Enable TCP Server** in
-the window; the harness's reconnect loop then resumes on its own.
+**The server takes exactly one client, silently.** `TcpServerSimple::newTcpConnection`
+closes and deletes any connection that arrives while a client is registered
+(`tcpserversimple.cpp:130-136`), with no log line and no "busy" reply, so a
+second client sees its socket closed at once. There is also no keepalive: the
+slot is freed only when Qt reports `disconnected()`/`error()`, so a client
+process that is killed (or vanishes without FIN) holds the slot until then.
+Two things follow: never diagnose "the VESC is dead" from a second client
+failing to get replies -- check `ss -tan | grep 65102` for who is connected,
+and close the harness before using a raw client. If **no** client can get a
+reply, including the harness, the fault is downstream of the server (the
+window's own VESC link), not the TCP layer; the GUI's Connection page shows
+that state.
+
+**Raw clients must speak the VESC packet framing.** `[type][length...][payload][crc16_hi][crc16_lo][0x03]`
+with type 2 for a one-byte length and 3 for a two-byte one, CRC over the
+payload only (`packet.cpp:72-104`). Sending a big-endian length as the first
+byte -- the natural guess -- makes the receiver drop every frame, which is
+indistinguishable from a dead link. That mistake cost an afternoon here.
 
 Observed on 7.00: the port and last connection type persist in
 `~/.config/VESC/VESC Tool.conf` (`tcp_port`, `connection_type`), but the enable checkbox
