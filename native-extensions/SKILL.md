@@ -238,3 +238,13 @@ See `c_libs/examples/` in the lispBM repo:
 Available in `c_libs/utils/`:
 - `utils.h/c` — Math utilities, angle normalization, low-pass filters, CRC, FFT
 - `rb.h/c` — Thread-safe ring buffer implementation
+
+## House Conventions from Shipped Packages
+
+`native-extensions/vesc-pkg-conventions.md` surveys `~/dev/vesc_pkg` (build and
+packaging, the `INIT_FUN`/`info->arg`/`stop_fun` contract, config pages via
+`conf_custom_add_config`, `plot_*` and `send_app_data` telemetry, CAN EID
+layout and `can-send-sid`/`event-can-eid`, and the measured extension-name
+budget: shipped libs register 1-5 names). Read it before designing a new
+extension's surface, and before inventing a convention this platform already
+has.
