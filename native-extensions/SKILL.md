@@ -60,6 +60,51 @@ Every extension file must have:
 3. **`INIT_FUN(lib_info *info)`** — Init function called when library is loaded
 4. **`INIT_START`** — Macro at the start of init function
 
+### Two hard limits that decide the extension's shape
+
+**1. Extension names are the scarcest resource.** The loader's table is
+`EXTENSION_STORAGE_SIZE` = 311 entries (`lispif.c:40`) and the firmware's own
+registrations leave room for roughly **fifteen** more. Overrunning it fails
+*silently* at registration, and then any *read* of an unregistered `ext-`
+symbol raises `fatal_error` from the reader — it tries to auto-register a stub,
+fails, and gives up (`eval_cps.c:4473`), so the failure looks like a crash
+rather than an unbound symbol. Symptom: some `ext-` names work, later ones
+report `fatal_error` with `Current: ~CHANNEL~` and `Starting at row: 1`, and
+even a never-seen name like `(ext-zzz)` does the same. Keep the surface small;
+put REPL diagnostics behind one selector argument instead of one name each.
+
+**2. A flash-resident image (const heap) cannot have writable statics.** If the
+image is loaded inside `@const-start`, it runs from flash read-only: a C store
+gives `fatal_error` and lisp refuses the array (`type_error`). The one
+writable cell such an image can reach is the loader's per-image `arg` slot:
+
+```c
+/* vesc_c_if.h:699 - *VESC_IF->get_arg(PROG_ADDR) */
+#define ARG  (*VESC_IF->get_arg(PROG_ADDR))
+```
+
+It is a `void *` in firmware RAM (`lispif_c_lib.c:lib_get_arg`, keyed by the
+image base the loader stored in `base_addr`), readable *and writable* from
+flash code, and it is what `stop_fun(arg)` receives. Use it to publish a
+heap-allocated state pointer so context-less callbacks can find it:
+
+```c
+/* Do NOT use HEADER for this: its prog_ptr is non-static, so under -fpic
+   &prog_ptr comes from the GOT, and this static link has no relocations -
+   the GOT entry is the link-time address 0, which never matches base_addr. */
+static volatile int prog_ptr __attribute__((__section__(".program_ptr")));
+
+static state_t *state(void) {
+  void **slot = VESC_IF->get_arg((uint32_t)&prog_ptr);
+  return (slot && *slot) ? (state_t *)*slot : NULL;
+}
+```
+
+Allocate the state in an `(ext-...-open)` call with `VESC_IF->malloc`, publish
+it in the slot, and free it from `info->stop_fun`. Verify a flash build with
+`arm-none-eabi-size`: **bss must be 0**; `data` may be only the 4-byte
+`.program_ptr` and constants.
+
 ## Extension Function Signature
 
 ```c
