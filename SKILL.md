@@ -227,6 +227,9 @@ python3 gen_vesc_c_if_docs.py --header ~/dev/vesc/lispBM/c_libs/vesc_c_if.h
 
 # Express extension tables from a vesc_express checkout
 python3 gen_express_extensions.py --express-root ~/dev/vesc_express
+
+# Device-QML API and component tables from a vesc_tool checkout
+python3 qml-ui/gen_qml_refs.py --vesc-tool-root ~/dev/vesc_tool
 ```
 
 - `ref/INDEX.md` — Master index of all language sections
@@ -257,5 +260,9 @@ python3 gen_express_extensions.py --express-root ~/dev/vesc_express
   over a VESC Tool window's TCP server, watching what it does in that window.
   `run.sh ask` is the entry point; `panel.qml` is the visible variant; `fake_vesc.py`
   tests it all with no hardware
+- `qml-ui/SKILL.md` — **custom GUIs**: writing a QML UI that any VESC Tool renders
+  (desktop, Android, iOS), the flash slot and package format that deploy it, a
+  working template package, and generated tables of the QML API. Read before
+  touching a package's `ui.qml` or debugging a GUI that does not appear
 - `native-extensions/SKILL.md` — C extension development guide
 - `native-extensions/vesc_c_if_api.md` — Auto-generated VESC C interface API reference
