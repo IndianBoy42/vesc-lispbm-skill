@@ -234,3 +234,90 @@ them used to be enough to exhaust it.
   stops working.
 - `sleep` and `uart-read` timeouts are honest seconds here; the earlier belief that they
   were 10x came from reading tick counts as milliseconds.
+
+## 9. Interpreter cost model (measured, VESC 6 MK6 / fw 6.06-era)
+
+All numbers below are wall-clock microseconds measured on one MK6 (168 MHz Cortex-M4F)
+with a 1 kHz priority+2 control thread running in the background, which steals about
+12-17% of the CPU; subtract roughly that share for pure interpreter time. Method: a
+self-contained script uploaded as the image (`systime` ticks = 100 us, large `n` to beat
+the tick resolution), printing one line per bench at load. That is the robust pattern:
+REPL `ask` lines are truncated/desynchronized above ~1 KB, while an uploaded script has no
+length limit and resets the VM.
+
+### Per-form costs
+
+| operation (per iteration) | us |
+|---|---|
+| `looprange` iteration with empty body (baseline) | 56 |
+| trivial call `(f0)` | +12.5 |
+| call with 4 args and arithmetic in the body | +68 total |
+| `(+ 1.2 3.4)` with literal args | +18 |
+| `(+ ga gb)` with global lookups | +25 |
+| `(cons 1 2)` discarded, garbage reclaimable by GC | +11 |
+| `(bufset-u16 buf 0 1234)` / `(bufget-u16 buf 0)` | +21 / +18 |
+| call a trivial native extension (`ext-probe`) | +11 |
+| build a 10-element float list (`ext-tail-status`) | +52 |
+| `(print "x")` | 365 |
+| `(spawn 128 f)` (thread create) | 488 |
+| `(sleep 0.001)` | 1046 (4.6% over nominal) |
+| `(sleep 0.01)` | 10240 (2.4% over nominal) |
+
+Predictions: `T_iter ~= 56 us + sum(form costs)`. A 40-form control iteration lands at
+~2-2.5 ms, matching the CRSF script's 2-6 ms/iteration at 37-89% evaluator load. Note the
+loop machinery dominates: a call costs 12.5 us, not 100 - the old "~100 us per call"
+figure was a call plus its surrounding loop.
+
+### The GC cliff
+
+`def`-shaped retention of cons cells while the heap fills (2753 cells, 22 KiB):
+
+| live cells | us per additional cons |
+|---|---|
+| garbage-reclaimable (steady state) | ~11 |
+| 800 live (~29%) | 84 |
+| 1600 live (~58%) | 91 |
+| 2400 live (~87%) | 106 |
+
+Retaining live data makes every allocation pay a mark-sweep: a 8-10x cliff, and past
+2753 live cells allocation fails outright. Budget live cells, not just allocations.
+
+### Split guidance that falls out of it
+
+- Deadlines or per-sample work: C (native extension or its own thread). The 1 kHz thread
+  is unaffected by interpreter state; per-call ext entry costs only ~11 us, so calling C
+  is cheap - it is the forms *around* it that cost.
+- 10-50 Hz supervision, telemetry shaping, tuning procedures: lisp. A 10 Hz watchdog with
+  one status call is <0.2% of the evaluator.
+- Batch boundary crossings: one 10-field status call (52 us) beats ten scalar calls
+  (10 x 11 us + ten loop iterations).
+
+## 10. LBM pool and image-size limits (measured)
+
+The script is stored as text in a ~131 KB flash region, and the byte array for a native
+library must fit the 28 KiB LBM array pool *while being parsed*.
+
+- **Array-literal parse ceiling.** The reader reserves `0.9 x longest_free_block` when it
+  sees the first number of `[ ... ]` and fails (`out_of_memory`, "Mem longest free") if the
+  array outgrows that. On a boot-clean pool this lands at ~20.1-20.9 KB of library bytes.
+  Measured: 17.9 KB image boots; 20.1 KB boots; 20.9 KB and 21.1 KB fail at row 1.
+- **A failed parse leaks its scratch array.** `:reset` does not reclaim it ("Allocated
+  arrays: 1" persists) and the next boot fails again - only an MCU reboot rebuilds the
+  pool. The *upload* path does reset the VM, so uploading a tiny stub script clears the
+  leak without a reboot.
+- **Text encoding sets the flash ceiling.** `c_libs/conv.py` packs `0xNN` tokens: 5
+  chars/byte, so the ~131 KB region caps the binary at ~26 KB (a 27.8 KB binary yields a
+  140 KB file and is rejected before flashing). Decimal tokens are ~3.6 chars/byte and
+  raise the ceiling to ~35 KB; see `VescTail/pack.py` for a drop-in replacement.
+- **Extension storage is 319 slots total** (`EXTENSION_STORAGE_SIZE`), shared by all
+  libraries and never reclaimed on unload; `:info` shows the count. Loading many libraries
+  (or re-loading one across boots) can exhaust it.
+- **Binary fat that sneaks in.** The soft-double library costs ~2.4 KB: one `roundf()`
+  call or a single `float -> int64` cast is enough to pull `__aeabi_f2ulz -> f2d -> dmul`.
+  `%f` in `printf` pulls the double printf machinery (~2 KB) and a big stack frame. Use
+  inline rounding, int32 casts, and integer formats.
+- **Measure the loop, not just the kernel.** A permanent in-thread gauge
+  (`avg/max step us` over a window, exposed as an extension) is cheaper and more honest
+  than a bench kernel: it reports the real step including every feature, under real
+  scheduling. Measured this way: full control step 122-171 us average, 350-660 us worst
+  cycle, at a steady 1002 Hz loop period.

@@ -162,6 +162,18 @@ See `ref/` directory for section-by-section language reference extracted from `l
   thread's). No newlib trig, no `%f` printf, no deep call chains — see
   `ref/performance-and-memory.md`, which also covers the one-packet
   recovery for a crash-looping device.
+- **A native-lib byte array above ~20 KB of code fails to parse at boot**
+  (`out_of_memory`, "Mem longest free"): the literal reader reserves only
+  0.9x the longest free pool block. The failed parse **leaks** that
+  scratch array - `:reset` does not reclaim it, the next boot fails
+  again, and only an MCU reboot (or an upload, which resets the VM, e.g.
+  a tiny stub script) clears it. Measured ceilings and the decimal-token
+  packing trick that lifts the flash limit are in
+  `ref/performance-and-memory.md`.
+- **Interpreter costs are now measured**: ~56 us per `looprange`
+  iteration, ~12 us per function call, ~11 us per ext call, a 8-10x GC
+  cliff once live cons cells pass ~30%. Prediction table and the
+  split-lisp-vs-C guidance: `ref/performance-and-memory.md`.
 - The full verified table, with symptoms, is in `ref/testing.md`. Read it before a long
   debugging session.
 
