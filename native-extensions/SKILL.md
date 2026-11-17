@@ -62,15 +62,38 @@ Every extension file must have:
 
 ### A const-heap image still needs one contiguous pool block at load
 
-Loading happens in two steps: the reader builds the byte array in the array
-pool, then the `@const-start` block moves it to the const region in flash.
-Runtime cost is therefore zero, but the **boot** still needs a contiguous
-block as large as the image. Measured on a VESC 6 MK6 (28,672 B pool): a
-20,388 B and a 20,614 B image boot; 20,746 B fails with `out_of_memory`,
-`Mem longest free: 510`, `Starting at row: 1` (the message names the row, not
-the size, so it looks like a parse bug). Budget ~20.3 KB of binary, count the
-diagnostic strings against it, and remember the image must still have no
-writable statics.
+Not a pool fraction, and not arbitrary: it is `0.9 x longest_free`, and
+`longest_free` already excludes the 10 % reserve. The chain, measured on a
+VESC 6 MK6 (`memory_array` = `LBM_MEMORY_SIZE_64BYTES_TIMES_X(448)` = 7,168
+words = 28,672 B):
+
+| step | source | bytes |
+|---|---|---|
+| pool | `lispif.c:36` | 28,672 |
+| VM's own state after an upload, before the script runs (`:info` during a `(sleep 8)` at the top: 0 arrays, 4 cons cells) | measured | −2,800 |
+| 10 % reserve, `memory_reserve_level = 0.1 x words` | `lbm_memory.c:91` | −2,864 |
+| **longest free run** (`:info` prints 23,008, and `lbm_memory_longest_free()` subtracts the reserve at `lbm_memory.c:217-224`) | measured | 23,008 |
+| reader's scratch, `initial_size = 0.9 x longest_free`, words x `sizeof(lbm_uint)` | `eval_cps.c:4556-4567` | **20,707** |
+
+So the largest image that can be written as a `[...]` literal is 20,707 B
+(one byte less by the `ix >= size - 1` check). Measured: 20,700 boots, 21,000
+fails. Three consequences worth knowing:
+
+- **The cap moves with the pool state.** `cont_read_start_bytearray` sizes the
+  array once, up front, and *never grows it*; `cont_read_append_bytearray`
+  raises `ENC_SYM_MERROR` when the literal outgrows that guess, which surfaces
+  as `out_of_memory` + `Mem longest free: N` + `Starting at row: 1` - it looks
+  like a parser bug, not a size limit. With the runtime running, longest free
+  falls to 18,588, so the same image cannot be reloaded by re-running the
+  script (`:reset`); only an upload boots it.
+- **A failed parse leaks the scratch.** The error longjmps past the free, so
+  the next attempt in the same session sees ~500 B of longest free and nothing
+  boots. Recover with another upload, never with a reset.
+- **The move to flash does not free the RAM copy.** Right after
+  `(load-native-lib img)` the pool still holds the array (`Allocated arrays: 1`,
+  free 6,644 with a 20,424 B image; the const heap also holds it). The next GC
+  reclaims it - with the runtime running, free returns to 21,456. So the image
+  costs nothing at steady state but needs the full contiguous block at boot.
 
 ### Two hard limits that decide the extension's shape
 
