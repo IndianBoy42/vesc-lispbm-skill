@@ -13,6 +13,30 @@ The one-sentence version: **the script's code is the heap**, so a 22 KB script f
 with `@const-start` took this driver from 2497 live cells and 0 free to 188 live cells and
 2563 free, and made feedback 6x faster without touching the bus.
 
+## 0. Time units — read this before dividing any counter
+
+Two independent unit mistakes have already been made in this project, and both produced
+plausible-looking numbers: tick counts read as milliseconds (10x too big) and TIM5 ticks
+read as microseconds (14x too big). Before dividing a counter, find its rate in the
+firmware source. Every clock available to a script or an extension, verified:
+
+| clock | implementation | unit | limits |
+|---|---|---|---|
+| `systime` (lisp) | `ext_systime` → `chVTGetSystemTimeX()`, `chconf.h: CH_CFG_ST_FREQUENCY = 10000` | **1 tick = 100 µs** | 32-bit, wraps every 119.3 h (~5 days) |
+| `secs-since`, `VESC_IF->ts_to_age_s` | `UTILS_AGE_S(x)` = `chVTTimeElapsedSinceX(x) / CH_CFG_ST_FREQUENCY` | seconds, float | wrap-safe |
+| evaluator `timestamp()`, hence `(sleep s)` | `platform/chibios/platform_timestamp.c`: ticks × (1e6 / ST_FREQUENCY) | **µs, but 100 µs granularity** | see the sleep row |
+| `timer_time_now()` | TIM5, `driver/timer.c: TIMER_HZ = 1.4e7` | **1 count = 1/14 µs** | µs = count × 1e6/1.4e7, i.e. **divide by 14**; 32-bit, wraps every 306.8 s |
+| `timer_seconds_elapsed_since(t)` | same counter / `TIMER_HZ` | seconds, float | wrap-safe |
+| `VESC_IF->sleep_us()`, `chThdSleepMicroseconds()` | `chThdSleep(US2ST(us))`; `US2ST` rounds **up** (`os/rt/include/chvt.h`) | multiples of 100 µs | `sleep_us(1)` sleeps one tick, i.e. 100 µs |
+| `VESC_IF->sleep_ms()` | `chThdSleepMilliseconds` | 100 µs resolution | integer milliseconds are exact |
+| `sleep_ticks(ticks)` | `chThdSleep` | 100 µs per tick | — |
+| `(systime)` on the **Linux** REPL | `repl/repl_exts.c: timestamp()` | **microseconds** | different platform: never port arithmetic between the two |
+
+`(sleep s)` therefore takes multiples of 100 µs plus the evaluator's own polling interval
+(`EVAL_CPS_MIN_SLEEP = 200` µs), so a control loop written as `(sleep 0.002)` lands at
+~2.1 ms, not 2.000 ms. That is the 2-5 % overshoot seen in the sleep rows below, not a
+scheduler bug.
+
 ## 1. The memory pools
 
 | pool | size on this firmware | holds | set by |
@@ -251,6 +275,7 @@ length limit and resets the VM.
 |---|---|
 | `looprange` iteration with empty body (baseline) | 56 |
 | trivial call `(f0)` | +12.5 |
+| one-argument call `(f1 i)` (re-measured, no background thread) | +29 |
 | call with 4 args and arithmetic in the body | +68 total |
 | `(+ 1.2 3.4)` with literal args | +18 |
 | `(+ ga gb)` with global lookups | +25 |
@@ -265,8 +290,11 @@ length limit and resets the VM.
 
 Predictions: `T_iter ~= 56 us + sum(form costs)`. A 40-form control iteration lands at
 ~2-2.5 ms, matching the CRSF script's 2-6 ms/iteration at 37-89% evaluator load. Note the
-loop machinery dominates: a call costs 12.5 us, not 100 - the old "~100 us per call"
-figure was a call plus its surrounding loop.
+loop machinery dominates, not the call: a zero-argument call adds ~7-12 us, a
+**one-argument** call ~29 us, and a trivial native-extension entry ~4 us (re-measured on
+fw 6.06-era, floor-subtracted, `n = 5000`, no background thread). The old "~100 us per
+call" figure was a call plus its surrounding loop, and "a call costs 12.5 us" is only true
+for the zero-argument case.
 
 ### The GC cliff
 

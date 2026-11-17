@@ -367,8 +367,8 @@ struct {
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `sleep_ms` | `void sleep_ms(uint32_t ms)` | Sleep current thread for ms milliseconds. |
-| `sleep_us` | `void sleep_us(uint32_t us)` | Sleep current thread for us microseconds. |
+| `sleep_ms` | `void sleep_ms(uint32_t ms)` | Sleep current thread for ms milliseconds (100 us resolution, integer ms exact). |
+| `sleep_us` | `void sleep_us(uint32_t us)` | Sleep current thread; **rounds up to 100 us systicks** (`US2ST`), so `sleep_us(1)` sleeps 100 us. Never use it for sub-tick timing. |
 | `system_time` | `float system_time()` | Time since boot in seconds (float). |
 | `ts_to_age_s` | `float ts_to_age_s(systime_t ts)` | Convert system timestamp to age in seconds (handles overflow). |
 | `printf` | `int printf(const char *str, ...)` | Print to lisp console in VESC-Tool. Printf-style formatting. |
@@ -575,7 +575,7 @@ struct {
 | `mutex_lock` | `void mutex_lock(lib_mutex)` | Lock mutex. Blocks. Has priority inheritance. |
 | `mutex_unlock` | `void mutex_unlock(lib_mutex)` | Unlock mutex. |
 | `lbm_symbol_to_io` | `bool lbm_symbol_to_io(lbm_uint sym, void **gpio, uint32_t *pin)` | Convert lisp symbol to STM32 GPIO. Only safe from extensions. |
-| `timer_time_now` | `uint32_t timer_time_now()` | High-res timer value (TIM5, 14 MHz). For busy-wait timing. |
+| `timer_time_now` | `uint32_t timer_time_now()` | TIM5 count at **14 MHz**: a delta is `1/14 us`, so divide by 14 for microseconds (wraps every 306.8 s). For busy-wait timing. |
 | `timer_seconds_elapsed_since` | `float timer_seconds_elapsed_since(uint32_t time)` | Seconds elapsed since a timer_time_now() capture. |
 | `timer_sleep` | `void timer_sleep(float seconds)` | Busy-wait sleep (seconds). High precision, blocks thread. |
 | `sys_lock` | `void sys_lock()` | System lock (disables interrupts). Counting — pair with sys_unlock. |
@@ -636,8 +636,9 @@ struct {
 | `f_u64` | `bool f_u64(lbm_flat_value_t *v, uint64_t w)` | Write uint64 into flat value. |
 | `f_lbm_array` | `bool f_lbm_array(lbm_flat_value_t *v, uint32_t num_elts, uint8_t *data)` | Write byte array into flat value. |
 | `lbm_unblock_ctx_unboxed` | `bool lbm_unblock_ctx_unboxed(lbm_cid cid, lbm_value unboxed)` | Unblock a context with a raw lbm_value (no flattening). FW 6.05+. |
-| `system_time_ticks` | `systime_t system_time_ticks()` |  |
-| `sleep_ticks` | `void sleep_ticks(systime_t ticks)` |  |
+| `system_time_ticks` | `systime_t system_time_ticks()` | Current ChibiOS systick count: **1 tick = 100 us** (10 kHz). Wraps every 119.3 h; compare deltas with `ts_to_age_s`. |
+| `sleep_ticks` | `void sleep_ticks(systime_t ticks)` | Sleep current thread for that many systicks (100 us each). |
+| `malloc` / `free` (Os) | `void* malloc(size_t)` / `void free(void*)` | General allocator on `LBM_MEMORY` (the same 28 KiB pool as byte arrays, 64 B blocks, mutex-protected, rounds a request into the GC reserve via `lbm_malloc_reserve`). Safe from any thread; use it for extension state that must live outside the image. |
 
 ## FOC Audio
 

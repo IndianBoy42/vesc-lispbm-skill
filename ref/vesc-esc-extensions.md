@@ -34,7 +34,7 @@ Details and argument order are in `../README.md`; this is the map.
 | Motor state | `get-rpm` `get-rpm-fast` `get-rpm-set` `get-duty` `get-current` `get-current-in` `get-current-dir` `get-id` `get-iq` `get-vd` `get-vq` `get-pos` `get-batt` `get-vin` `get-ah` `get-wh` `get-ah-chg` `get-wh-chg` `get-fault` `get-dist` `get-encoder` |
 | Thermal | `get-temp-fet` (arg picks sensor 1..3, 0/omitted = hottest) `get-temp-mot` `override-temp-motor` |
 | Control | `set-current` `set-current-rel` `set-duty` `set-brake` `set-brake-rel` `set-handbrake` `set-handbrake-rel` `set-rpm` `set-pos` `foc-openloop` `set-kill-sw` `select-motor` `app-disable-output` |
-| Timing | `systime` (ticks, 10 kHz on ESC) `secs-since` `sleep` (seconds) — plus the lispBM
+| Timing | `systime` (**100 us ticks**, 10 kHz on ESC) `secs-since` (seconds, wrap-safe) `sleep` (seconds; 100 us granularity + 200 us poll) — units table: `performance-and-memory.md` section 0. Plus the lispBM
 loops `loopfor` `loopwhile` `looprange` `loopforeach` and `loopwhile-thd` |
 | Config | `conf-get` `conf-set` `conf-store` `conf-get-limits` `conf-restore-mc` `conf-restore-app` `eeprom-store-f` `eeprom-read-f` `eeprom-store-i` `eeprom-read-i` |
 | CAN | `can-send-sid` `can-send-eid` `can-recv-sid` `can-recv-eid` `can-msg-age` `can-list-devs` `canset-*` `canget-*` `canset-current` ... `canget-temp-motor` |

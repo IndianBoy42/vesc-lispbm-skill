@@ -17,9 +17,13 @@ $LP/repl/repl --terminate --history_file "" -H 12000 -M 10 -s /tmp/myscript.lisp
 - `-M` takes an index, not bytes: `1`=128 words, `6`=10K, `10`=32K, and so on (see the
   switch in `repl/repl.c` or run `repl --help`).
 
-Time: `systime` is **microseconds** on the host REPL and 10 kHz ChibiOS ticks on the ESC, so
-never do arithmetic on it — it is an opaque token. `secs-since` is seconds in both, which is
-what a script should measure its sample period with.
+Time: `systime` is **microseconds** on the host REPL and **100 us ticks** (10 kHz ChibiOS
+systicks) on the ESC, so never do arithmetic on it and never reuse a constant between the
+two — it is an opaque token that wraps (32-bit: 119.3 h on the ESC). `secs-since` is
+seconds in both and is wrap-safe; measure sample periods with that. If you must count ticks,
+remember one ESC tick is 100 us, and `timer_time_now()` is a different clock again (14 MHz:
+divide by 14 for us). The full table with firmware references is section 0 of
+`performance-and-memory.md`.
 
 ## Stubbing the VESC-only functions
 

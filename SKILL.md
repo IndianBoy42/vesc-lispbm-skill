@@ -171,9 +171,16 @@ See `ref/` directory for section-by-section language reference extracted from `l
   packing trick that lifts the flash limit are in
   `ref/performance-and-memory.md`.
 - **Interpreter costs are now measured**: ~56 us per `looprange`
-  iteration, ~12 us per function call, ~11 us per ext call, a 8-10x GC
-  cliff once live cons cells pass ~30%. Prediction table and the
-  split-lisp-vs-C guidance: `ref/performance-and-memory.md`.
+  iteration (the loop machinery is the dominant term), +7-12 us for a
+  zero-argument call, **+29 us for a one-argument call**, +4 us for a
+  trivial ext entry, and an 8-10x GC cliff once live cons cells pass
+  ~30%. Prediction table and the split-lisp-vs-C guidance:
+  `ref/performance-and-memory.md`.
+- **Check the units before dividing a counter.** `systime` is 10 kHz
+  (100 us ticks), `timer_time_now` is TIM5 at 14 MHz (**divide by 14**
+  for us), sleeps round up to 100 us. Getting this wrong twice already
+  produced figures that were 10x and 14x off. Full table with sources:
+  `ref/performance-and-memory.md` section 0.
 - The full verified table, with symptoms, is in `ref/testing.md`. Read it before a long
   debugging session.
 
@@ -202,7 +209,9 @@ Available only on VESC firmware, not in standalone lispBM. Names below are verif
 - Thermal: `get-temp-fet` (argument selects sensor 1..3, 0/omitted = hottest), `get-temp-mot`
 - Control: `set-current`, `set-current-rel`, `set-duty`, `set-brake`, `set-rpm`, `set-pos`,
   `set-kill-sw`, `select-motor`, `app-disable-output`
-- Timing: `systime` (ticks, 10 kHz on ESC), `secs-since`, `sleep` (seconds)
+- Timing: `systime` (**100 us ticks** — 10 kHz on the ESC, microseconds on the Linux
+  REPL), `secs-since` (seconds, wrap-safe), `sleep` (seconds; effective resolution
+  100 us + the evaluator's 200 us poll, so `(sleep 0.002)` lands ~2.1 ms)
 - Config: `conf-get`, `conf-set`, `conf-store`, `eeprom-store-f`, `eeprom-read-f`
 - CAN: `can-send-sid`, `can-send-eid`, `can-recv-sid`, `can-recv-eid`, `canget-*`, `canset-*`
 - IO: `gpio-configure`, `gpio-write`, `gpio-read`, `pwm-set-duty`, `icu-width`, `get-adc`,
