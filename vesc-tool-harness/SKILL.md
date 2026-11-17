@@ -53,6 +53,16 @@ vesc_tool                      # from PATH, or your desktop launcher
 # then, in the GUI: Connection -> Connect, then Enable TCP Server
 ```
 
+**Killing a client wedges the server until the box is re-ticked.** The window's
+server keeps the accept state of a client whose socket was closed under it
+(the usual case: the harness process is killed so another client can use the
+port). Afterwards it still *accepts* connections but forwards nothing: even
+`COMM_FW_VERSION` gets no reply, so the symptom looks like a dead VESC. Do not
+try to repair it from QML -- `VescIf.tcpServerStart/Stop()` in the harness
+process acts on that process's own server, not the window's, and starting one
+on an occupied port just fails. Untick and re-tick **Enable TCP Server** in
+the window; the harness's reconnect loop then resumes on its own.
+
 Observed on 7.00: the port and last connection type persist in
 `~/.config/VESC/VESC Tool.conf` (`tcp_port`, `connection_type`), but the enable checkbox
 does not, and a plain launch opens no listener. Verified by starting the GUI and checking
