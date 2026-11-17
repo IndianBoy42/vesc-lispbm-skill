@@ -60,6 +60,18 @@ Every extension file must have:
 3. **`INIT_FUN(lib_info *info)`** — Init function called when library is loaded
 4. **`INIT_START`** — Macro at the start of init function
 
+### A const-heap image still needs one contiguous pool block at load
+
+Loading happens in two steps: the reader builds the byte array in the array
+pool, then the `@const-start` block moves it to the const region in flash.
+Runtime cost is therefore zero, but the **boot** still needs a contiguous
+block as large as the image. Measured on a VESC 6 MK6 (28,672 B pool): a
+20,388 B and a 20,614 B image boot; 20,746 B fails with `out_of_memory`,
+`Mem longest free: 510`, `Starting at row: 1` (the message names the row, not
+the size, so it looks like a parse bug). Budget ~20.3 KB of binary, count the
+diagnostic strings against it, and remember the image must still have no
+writable statics.
+
 ### Two hard limits that decide the extension's shape
 
 **1. Extension names are the scarcest resource.** The loader's table is
