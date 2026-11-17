@@ -184,6 +184,51 @@ See `ref/` directory for section-by-section language reference extracted from `l
 - The full verified table, with symptoms, is in `ref/testing.md`. Read it before a long
   debugging session.
 
+### Default: put everything you can in the const heap
+
+**This is the default guideline, not a tuning step.** Anything that is not mutated at
+runtime belongs in an `@const-start` / `@const-end` block: function definitions, tables,
+string constants, and the native-extension image itself. It costs nothing at call time and
+buys back the 22 KB cons heap and the 28 KB array pool.
+
+```clj
+@const-start
+(defun control (x) (+ x 1))
+(def lut [1 2 3 4])
+(load-native-lib [ ...extension image bytes... ])   ; image lives in flash
+@const-end
+(def mutable-state (bufcreate 64))                  ; stays in the pool
+```
+
+Measured on a VESC 6 MK6 (fw 6.06-era):
+
+| | in the heap/pool | in the const heap |
+|---|---|---|
+| 30-function driver | 2497 live cells, 0 free | 178 live cells, 2563 free |
+| 18.6 KB extension image | occupies 18.6 KB of the 28 KB pool | **0 bytes of it**; `bufcreate 20000` succeeds where it previously failed with `Mem longest free: 0` |
+| same kernel, 20 k iterations | 356.8 ms | **295.6 ms** (−17 %, the F4 ART accelerator covers flash but not SRAM) |
+
+Rules and limits:
+
+- Only the **incremental reader** honours the markers, so this works for an uploaded
+  script (VESC Tool / `:upload`), not for a streamed or REPL-entered one.
+- On boot the script is re-parsed from flash, so the block re-runs: a
+  `(load-native-lib ...)` inside it re-registers the extension while the array stays a
+  flash const (verified: `:reset` prints "Parsing <n> characters", the extension is back,
+  and the pool is still free).
+- The const heap is **write-once**. A changed image needs that flash region erased, which
+  the firmware does when it recreates the image (`const_write_error`, app-CRC change) or
+  on an upload; iterating on an image otherwise reports "Attempted to write to const heap
+  at N, but it is already occupied".
+- Nothing in a flash image can be written: lisp refuses (`type_error`) and a C store gives
+  `fatal_error`. A native extension therefore may hold **no writable statics** — no
+  globals, no `static` counters — if it is to live there. Callbacks with no context
+  argument (`can_set_eid_cb`, `imu_set_read_callback`) cannot reach heap state from flash
+  code, so such an extension splits into a flash part (logic) plus a tiny RAM part holding
+  the state and the callback; see `ref/performance-and-memory.md`.
+- `move-to-flash` does the same for one value after the fact, and `dm-create` regions stay
+  in the pool by design (they exist to be compactable).
+
 ### Cost and lifetime of a script
 - Memory: 2753 cons cells (22024 B) plus a separate 28672 B pool for arrays and byte
   buffers (`../lispif.c`). A ring buffer of N floats costs `4*N` bytes of the pool.
@@ -192,7 +237,8 @@ See `ref/` directory for section-by-section language reference extracted from `l
   script fills the heap and every allocation then pays a full GC. Wrap the definitions in
   `@const-start` / `@const-end` (the uploaded-script path uses the incremental reader, so it
   works) and they move to flash instead — 2497 live cells fell to 178 on the bench driver,
-  with no call-time penalty. Full numbers and caveats: `ref/performance-and-memory.md`.
+  with no call-time penalty. The same applies to a native extension image. Full numbers
+  and caveats: the section above and `ref/performance-and-memory.md`.
 - The script's globals live in one global environment that outlives the script's own
   thread and is shared with anything else loaded, so prefix names with something script
   specific rather than using `n`, `dt`, `i`.

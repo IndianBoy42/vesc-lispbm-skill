@@ -214,6 +214,13 @@ Taken with `(systime)` (100 µs ticks) on the bench ESC.
 
 ## 6. Rules
 
+0. **Put everything that is not mutated in the const heap** (`@const-start`): code, tables,
+   strings, and the native-extension image. It is free at call time and it is the only way
+   to keep a 18 KB image out of the 28 KB array pool; measured 0 bytes of pool and 17 %
+   faster execution. A flash image may hold no writable statics (writes give
+   `fatal_error`), so extension state moves to `malloc` plus a small RAM module when a
+   context-less callback is needed. SKILL.md has the full guideline.
+
 1. **Keep free cells high.** Check `:info`; a heap above ~80% live means every allocation
    pays a GC. Target several hundred free cells minimum.
 2. **Put code in `@const-start`;** keep the heap for mutable state and buffers.
