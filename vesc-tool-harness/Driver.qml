@@ -336,6 +336,27 @@ Item {
             statsCan = canTarget
             cmd.lispGetStats(true)
             // The reply arrives asynchronously; emit() is driven by the signal.
+        } else if (s === ":cfg") {
+            // Custom (VESC Tool) configuration pages, as the TOOL decoded
+            // them: it fetches them on every connect (fwVersionReceived ->
+            // customConfigGet), so this reports the end-to-end path without
+            // needing the TCP port for a raw client. num 0 while connected
+            // means the firmware never dispatched COMM_GET_CUSTOM_CONFIG to
+            // the extension, which is exactly what hides the page in the GUI.
+            var info = { k: "cfg", connected: VescIf.isPortConnected(),
+                         num: VescIf.customConfigNum(),
+                         loaded: VescIf.customConfigsLoaded() }
+            if (info.num > 0) {
+                var p = VescIf.customConfig(0)
+                info.hasB0 = p.hasParam("b0_base")
+                info.b0 = p.getParamDouble("b0_base")
+                info.b0Min = p.getParamMinDouble("b0_base")
+                info.b0Max = p.getParamMaxDouble("b0_base")
+                info.hasPlotDiv = p.hasParam("plot_div")
+                info.plotDiv = p.getParamDouble("plot_div")
+                info.hasCanNode = p.hasParam("can_node")
+            }
+            emit(info)
         } else if (s === ":ping") {
             emit({ k: "pong", connected: VescIf.isPortConnected() })
         } else if (s === ":quit") {

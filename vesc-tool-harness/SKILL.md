@@ -53,6 +53,14 @@ vesc_tool                      # from PATH, or your desktop launcher
 # then, in the GUI: Connection -> Connect, then Enable TCP Server
 ```
 
+`:cfg` reports the device's custom (VESC Tool) configuration pages as the
+*tool* decoded them — the tool fetches them on every connect
+(`fwVersionReceived` -> `customConfigGet`), so this needs no raw packet client
+and no exclusive port. `num` 0 while `connected` is true means the firmware
+never dispatched `COMM_GET_CUSTOM_CONFIG` to the extension, which is what
+hides the page in the GUI; `hasB0`/`b0`/`b0Min`/`b0Max` then show whether the
+page's defaults and ranges arrived intact.
+
 **Killing a client wedges the server until the box is re-ticked.** The window's
 server keeps the accept state of a client whose socket was closed under it
 (the usual case: the harness process is killed so another client can use the
