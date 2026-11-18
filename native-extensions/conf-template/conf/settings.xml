@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Settings page template for a lispBM native extension. Running
+  `vesc_tool` with the xmlConfToCode option on conf/settings.xml turns this
+  into confparser.{c,h}, confxml.{c,h} and conf_default.h next to it.
+
+  Rename points, in order of appearance:
+    config_name valString     your struct typedef name in conf/datatypes.h
+    hw_name longName          the page name VESC Tool shows
+    PACKAGE_NAME / PACKAGE_VERSION in conf/conf_general.h
+    cDefine prefixes and the param names themselves
+  Everything else (type codes, vTx codes, the field sets per type) is the
+  shape the generator actually reads; keep it.
+
+  The wire budget rule for doubles: vTx 7 is a signed 16-bit fixed point
+  with vTxDoubleScale, so |value| * scale must stay <= 32767 over the whole
+  UI range. The scale is both the resolution and the range budget; narrow
+  the UI range and keep any wider clamp in C.
+-->
+<ConfigParams>
+	<Params>
+		<config_name>
+			<longName>none</longName>
+			<type>3</type>
+			<transmittable>0</transmittable>
+			<valString>TemplateConfig</valString>
+			<maxLen>0</maxLen>
+		</config_name>
+		<!-- Mandatory. VESC Tool up to and including 7.00 dereferences
+		     getParam("hw_name") unchecked after connect, so a config
+		     without this param crashes the tool. Display-only: not
+		     serialized, not in the struct. -->
+		<hw_name>
+			<longName>Template Settings</longName>
+			<type>0</type>
+			<transmittable>0</transmittable>
+			<description>Settings page for the template native extension.</description>
+			<cDefine></cDefine>
+		</hw_name>
+		<!-- double, 16-bit fixed point on the wire (vTx 7) -->
+		<example_gain>
+			<longName>Controller gain</longName>
+			<type>1</type>
+			<transmittable>1</transmittable>
+			<description>Example double parameter: 0.01 resolution, 300 max.</description>
+			<cDefine>CFG_DFLT_EXAMPLE_GAIN</cDefine>
+			<editorDecimalsDouble>2</editorDecimalsDouble>
+			<editorScale>1</editorScale>
+			<editAsPercentage>0</editAsPercentage>
+			<maxDouble>300</maxDouble>
+			<minDouble>0.1</minDouble>
+			<showDisplay>0</showDisplay>
+			<stepDouble>0.01</stepDouble>
+			<valDouble>12.5</valDouble>
+			<vTxDoubleScale>100</vTxDoubleScale>
+			<suffix></suffix>
+			<vTx>7</vTx>
+		</example_gain>
+		<!-- int, int16 on the wire (vTx 4) -->
+		<example_cycles>
+			<longName>Cycle divider</longName>
+			<type>2</type>
+			<transmittable>1</transmittable>
+			<description>Example int parameter. 0 disables the divider.</description>
+			<cDefine>CFG_DFLT_EXAMPLE_CYCLES</cDefine>
+			<maxInt>1000</maxInt>
+			<minInt>0</minInt>
+			<stepInt>1</stepInt>
+			<valInt>10</valInt>
+			<suffix></suffix>
+			<editAsPercentage>0</editAsPercentage>
+			<showDisplay>0</showDisplay>
+			<vTx>4</vTx>
+		</example_cycles>
+		<!-- bool, one byte on the wire (vTx 1) -->
+		<example_enabled>
+			<longName>Enable output</longName>
+			<type>5</type>
+			<transmittable>1</transmittable>
+			<description>Example bool parameter.</description>
+			<cDefine>CFG_DFLT_EXAMPLE_ENABLED</cDefine>
+			<maxInt>1</maxInt>
+			<minInt>0</minInt>
+			<stepInt>1</stepInt>
+			<valInt>1</valInt>
+			<suffix></suffix>
+			<editAsPercentage>0</editAsPercentage>
+			<showDisplay>0</showDisplay>
+			<vTx>1</vTx>
+		</example_enabled>
+		<!-- enum, one byte on the wire: the value is the enumNames index -->
+		<example_mode>
+			<longName>Operating mode</longName>
+			<type>4</type>
+			<transmittable>1</transmittable>
+			<description>Example enum parameter.</description>
+			<cDefine>CFG_DFLT_EXAMPLE_MODE</cDefine>
+			<valInt>0</valInt>
+			<enumNames>TEMPLATE_MODE_OFF</enumNames>
+			<enumNames>TEMPLATE_MODE_ON</enumNames>
+		</example_mode>
+	</Params>
+	<!-- The serialization order: exactly the transmittable params, in this
+	     order, and the struct fields in conf/datatypes.h must match it. -->
+	<SerOrder>
+		<ser>example_gain</ser>
+		<ser>example_cycles</ser>
+		<ser>example_enabled</ser>
+		<ser>example_mode</ser>
+	</SerOrder>
+</ConfigParams>

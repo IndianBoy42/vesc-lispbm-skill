@@ -89,69 +89,52 @@ INIT_FUN(lib_info *info) {                // -> bool __attribute__((section(".in
   a second TU shifts `.init_fun` and breaks `PROG_ADDR` for every TU but the
   first.
 
-### Generating the settings page (`--xmlConfToCode`), learned the hard way
+### Generating the settings page
 
-`vesc_tool --xmlConfToCode conf/settings.xml` reads only the XML; it does
-**not** read your `datatypes.h`, and it emits
-`confparser.{c,h}`, `confxml.{c,h}` and `conf_default.h` next to the XML.
-What it needs, and what silently produces an empty config if missing:
+**Start from `conf-template/` in this directory.** It is the whole system —
+XML (one param per common type), the struct, the big-endian saturating
+buffer helpers, the Makefile rule with the const patch, and the extension
+wiring (EEPROM block, cfg callbacks, registration) — assembled from the
+instance that works on hardware (VescTail), and verified by generating and
+round-tripping its own output on the host. Copy it, run its rename
+checklist, and `make conf`.
 
-1. **A hand-written `conf/datatypes.h`** with `typedef struct {...} TailConfig;`
-   next to the XML. The generated parser `#include "datatypes.h"` and uses
-   the struct type named by `<config_name>`; it also wants a `buffer.h` with
-   `buffer_append_{uint32,int16,float16}` / `buffer_get_*` (big-endian) and a
-   `conf_general.h` (the generated `.c` includes both).
-2. `<config_name>` with `<type>3</type>` (QSTRING) and
-   `<valString>TailConfig</valString>`. Any other type silently falls back to
-   a struct called `device_config`.
+The generator, `vesc_tool --xmlConfToCode conf/settings.xml`, reads only
+the XML. It does not read your `datatypes.h`, it emits
+`confparser.{c,h}`, `confxml.{c,h}` and `conf_default.h` next to the XML,
+and wrong scaffolding fails *silently* — an empty page, a 4-byte wire
+format, a struct silently called `device_config` — which is why the
+template exists instead of a longer recipe.
 
-3. **`<hw_name>` is mandatory — the tool crashes without it.** Define it
-   right after `config_name` (type `0`, `transmittable 0`, like every
-   reference package does); the tool shows its `longName` as the page's
-   display name. Up to and including VESC Tool 7.00 the
-   `customConfigLoadDone` handler in `mainwindow.cpp` runs
-   `getParam("hw_name")->longName` unchecked, and `getParam` returns nullptr
-   for a missing param. A config without `hw_name` therefore **segfaults
-   VESC Tool right after connect** — measured: within ~2 s, every connect,
-   reproduced under gdb. The failure signature to grep for:
-   `"hw_name" not found` twice in the tool's console, then SIGSEGV. It is
-   display-only: the wire format and the C struct do not change, but the
-   XML blob grows, so re-check the image against the load cap.
+Sanity checks after any edit:
 
-   **When the served XML changes, clear the tool's cache once**:
+1. **`<hw_name>` stays defined.** VESC Tool ≤7.00 runs
+   `getParam("hw_name")->longName` unchecked in its `customConfigLoadDone`
+   handler, so without it the tool **segfaults right after connect**
+   (measured: within ~2 s, every connect; signature: `"hw_name" not
+   found` twice, then SIGSEGV).
+2. **A served-XML change clears the tool's cache once**:
    `~/.local/share/VESC/VESC Tool/hw_cache/<hwConfCrc>/conf_custom_N.bin`.
    The cache is keyed by the hardware-config CRC alone, so a same-CRC
-   device with new XML serves the stale page forever — an old page is
-   indistinguishable from a failed update.
-4. **`<SerOrder>`**, a sibling of `<Params>`, listing every serialized field
-   as `<ser>name</ser>`. Without it the parser has an empty field list:
-   `SERIALIZED_CONFIG_LENGTH` comes out as 4 (the signature only) and
-   nothing is generated for the page. A name in `<SerOrder>` that is absent
-   from `<Params>` prints `"name" not found`.
-5. Type codes: `1` double, `2` int, `3` QString, `4` enum, `5` bool,
-   `6` bitfield (`CFG_T` in the tool's `datatypes.h`). `vTx` codes:
-   `1` uint8, `2` int8, `3` uint16, `4` int16, `5` uint32, `6` int32,
-   `7` double16, `8` double32, `9` double32_auto. A double without a
+   device with new XML serves the stale page forever.
+3. **Doubles are 16-bit fixed point** with their `vTxDoubleScale`, so
+   `|value| * scale <= 32767` over the whole UI range; the scale is both
+   the resolution and the range budget. A double without a
    double16/32 `vTx` prints `Serialization type not supported`.
-6. **Doubles are 16-bit fixed point**: `(int16_t)(value * vTxDoubleScale)`.
-   So `|value| * scale <= 32767` for the whole UI range, and the scale is
-   both the precision and the range budget. Pick per parameter; a range
-   spanning five decades cannot survive, so narrow the UI range and keep
-   the wider C clamp in code. Saturation in your own `buffer_append_float16`
-   keeps an out-of-range value from wrapping to the wrong sign.
-7. Defaults are printed with 6 significant digits, so the generated
-   `confparser_set_defaults_*` can differ from a C literal in the 6th digit.
-   A unit test comparing XML defaults against C defaults needs ~2e-5
-   relative tolerance, which still catches real drift.
-8. `get_cfg_xml` returns the blob as `data_tailconfig_ + PROG_ADDR` — the
-   address in the image is link-time (0-relative). Keep the array `const`
-   (patch the generated `.c`, or it lands in `.data`, which a flash image
-   must not have) and prove the pointer on hardware by checksumming
-   `len` bytes at it against the ELF.
-9. The callbacks must be in flash or RAM: the firmware validates them with
-   `utils_is_func_valid` (0x08000000..+1MB flash, 0x20000000..+128KB RAM,
-   0x10000000..+64KB CCM). Registration is silent when it fails, and
-   `COMM_GET_CUSTOM_CONFIG` (93) then never answers.
+4. **Defaults print with 6 significant digits**: a host test comparing
+   XML defaults against C defaults needs ~2e-5 relative tolerance, which
+   still catches real drift.
+5. **The blob pointer needs `+ PROG_ADDR`** at runtime (the image links
+   at 0). Prove it on hardware by checksumming `len` bytes at it against
+   the ELF.
+6. **Registration can fail silently**: the firmware validates callbacks
+   with `utils_is_func_valid` (flash 0x08000000..+1MB, RAM
+   0x20000000..+128KB, CCM 0x10000000..+64KB). If it rejects one,
+   `COMM_GET_CUSTOM_CONFIG` (93) never answers.
+7. Type codes, for params the template does not show: `1` double, `2`
+   int, `3` QString, `4` enum, `5` bool, `6` bitfield; `vTx`: `1` uint8,
+   `2` int8, `3` uint16, `4` int16, `5` uint32, `6` int32, `7` double16,
+   `8` double32, `9` double32_auto.
 
 ## 3. Config, telemetry and logging (the parts most extensions forget)
 
