@@ -72,11 +72,13 @@
 			<showDisplay>0</showDisplay>
 			<vTx>4</vTx>
 		</example_cycles>
-		<!-- A flag is int 0/1, never a served bool: getParamsXML drops <vTx>
-		     from bool/enum/bitfield params, the tool then defaults their vTx
-		     to UNDEFINED, and the page-signature check ("Could not
-		     deserialize custom config 0") fails forever. Ints keep their
-		     vTx, so int 0/1 with vTx 1 is one byte on the wire and sound. -->
+		<!-- A flag is int 0/1: getParamsXML drops <vTx> from served
+		     bool/enum/bitfield params, so a bool whose SOURCE pins an
+		     explicit <vTx> gets a generator hash the tool can never
+		     reproduce ("Could not deserialize custom config 0" at every
+		     connect). A bool without the tag works today - both ends hash
+		     the default - but rides on the tool's default never changing.
+		     Int 0/1 with vTx 1 pins the hash on both ends. -->
 		<example_enabled>
 			<longName>Enable output</longName>
 			<type>2</type>

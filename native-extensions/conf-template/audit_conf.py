@@ -49,24 +49,37 @@ def audit(path):
             t = re.search(r"<type>(\d+)</type>", b)
             trans.append((n, t.group(1) if t else "?", b))
 
-    # getParamsXML (vesc_tool) emits <vTx> only for double and int params.
-    # A served bool/enum/bitfield loses its vTx, the tool defaults it to
-    # VESC_TX_UNDEFINED, and the page-signature check in deSerialize can
-    # never match the generator's hash: "Could not deserialize custom
-    # config 0" on every read, on every tool version. The page still
-    # *loads*, so a loaded-check never catches it. Int 0/1 with vTx 1
-    # keeps the 1-byte wire and hashes identically on both ends.
+    # The page-signature rule, precisely: getParamsXML (vesc_tool) emits
+    # <vTx> only for double and int params. A bool/enum/bitfield WITH an
+    # explicit <vTx> in the source makes the generator hash the pinned
+    # value while the tool - reading the served page, which lost the tag -
+    # hashes its default: the deserialize signature check can then never
+    # match, and the 1 s connect-poll (mTimerConfigUpdate ->
+    # customConfigGet for updateCnt()==0) makes the "Could not deserialize
+    # custom config 0" dialog appear at every connect. Without an explicit
+    # <vTx> both ends hash the same default and the page works - that is
+    # what every vesc_pkg page does (verified against balance, float,
+    # refloat, tnt and the example's committed constants). Int 0/1 with an
+    # explicit <vTx> pins the hash on both ends and is the robust form.
     for n, t, b in trans:
+        vtx = re.search(r"<vTx>\d+</vTx>", b)
         if t not in ("1", "2"):
-            findings.append(
-                f"transmittable {TX_NAME.get(t, t)} '{n}': the served page "
-                "loses its <vTx> -> the deserialize signature check fails "
-                "forever; make it int 0/1")
-        elif not re.search(r"<vTx>\d+</vTx>", b):
+            if vtx:
+                findings.append(
+                    f"transmittable {TX_NAME.get(t, t)} '{n}' carries an "
+                    "explicit <vTx>: the served page cannot deliver it, so "
+                    "the deserialize signature check fails at every "
+                    "connect - use int 0/1 (vTx 1) or drop the tag")
+            else:
+                findings.append(
+                    f"note: transmittable {TX_NAME.get(t, t)} '{n}' has no "
+                    "<vTx>: both ends hash the same default today, but the "
+                    "hash then depends on the tool's default never "
+                    "changing - int 0/1 with vTx 1 is the robust form")
+        elif not vtx:
             findings.append(
                 f"transmittable {TX_NAME[t]} '{n}' has no <vTx> in the "
                 "source: the tool defaults it and the hash diverges")
-
     # The wire is exactly the SerOrder. Entries may be transmittable=0 -
     # that is the read-only info-field pattern (e.g. float's
     # float_version): it rides the wire and renders, but the value only

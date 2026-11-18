@@ -113,23 +113,27 @@ Sanity checks after any edit:
    handler, so without it the tool **segfaults right after connect**
    (measured: within ~2 s, every connect; signature: `"hw_name" not
    found` twice, then SIGSEGV).
-2. **A transmittable flag is int 0/1, never a bool or enum.** The
-   served-page emitter (`ConfigParams::getParamsXML`) writes `<vTx>` only
-   for double and int params; bool/enum/bitfield lose it, the tool
-   defaults their vTx to `VESC_TX_UNDEFINED`, and the page-signature
-   check in `deSerialize` diverges from the generator's - every connect
-   raises "Could not deserialize custom config 0", on every tool version,
-   including after the XML itself is re-fetched. The page's *load* still
-   succeeds, so a `loaded` check never catches it; verify by actually
-   reading values in the page UI. Int 0/1 with `vTx` 1 keeps the 1-byte
-   wire and hashes identically on both ends. This is systemic, not local:
-   an audit of `vesc_pkg` found every shipped page with a custom config
-   (balance, float, refloat, tnt) plus the `c_libs/examples/config`
-   reference carrying transmittable bools/enums - none of those pages
-   has ever passed the deserialize check. Users rarely notice because
-   the dialog appears only when the raw page is read, and the packages'
-   own QML UIs bypass it. The example is fixed; `audit_conf.py` in
-   `conf-template/` encodes this check and the others below.
+2. **An explicit `<vTx>` on a transmittable bool/enum/bitfield breaks the
+   page - the tag itself is the trap.** The served-page emitter
+   (`ConfigParams::getParamsXML`) writes `<vTx>` only for double and int
+   params. Pin the tag on a bool/enum and the generator hashes the pinned
+   value while the tool - reading the served page, which lost the tag -
+   hashes its default: the deserialize signature check can then never
+   match, and "Could not deserialize custom config 0" appears at every
+   connect, because a 1 s poll (`mTimerConfigUpdate` ->
+   `customConfigGet` for `updateCnt()==0`) fetches the data right after
+   connecting - a modal no user could miss. This bit VescTail because its
+   source pinned `<vTx>1</vTx>` on both flags. A bool/enum *without* the
+   tag is fine today - generator and tool hash the same default, which
+   is exactly what every `vesc_pkg` page does (verified against
+   balance, float, refloat, tnt and the example's committed signature
+   constants, all equal to the default-vTx hash) - but it leaves the hash
+   riding on the tool's default never changing. Int 0/1 with `vTx` 1
+   pins the hash on both ends, keeps the 1-byte wire, and is the robust
+   form. The page *loads* through all of this, so a `loaded` check
+   never catches a break; verify by actually reading values in the page
+   UI. `audit_conf.py` in `conf-template/` encodes this check and the
+   others below.
 3. **The page renders only the `<Grouping>` section.** The custom-config
    page builds its UI from the "General" group's subgroups
    (`pagecustomconfig.cpp`): one tab per subgroup, one row per param. A
