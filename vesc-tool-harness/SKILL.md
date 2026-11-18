@@ -12,6 +12,20 @@ Keep a VESC Tool window open, connected to the VESC, on the Scripting page, wher
 watch. Then run `agent.qml` in a **second** vesc_tool process that connects to that window's
 TCP server. The second process drives the interpreter; you watch the first.
 
+**No window available? Attach over USB directly.** The same harness accepts
+`serial:///dev/ttyACM0` (or a bare `/dev/...` path) in `--vescPort` and calls
+`VescIf.connectSerial` itself — no VESC Tool window, no TCP server, and no
+single-client slot involved. Use this when the user's window is gone (a
+crashed tool, a rebooted machine) or when the agent owns the only USB port:
+
+```sh
+nohup ./run.sh serial:///dev/ttyACM0#daemon >> harness.log 2>&1 &
+```
+
+Only one process can hold the port: stop the harness (send `:quit`) before
+the user's own VESC Tool connects, and expect its AutoConnect to fail while
+the harness holds the device.
+
 Nothing is hidden. The window's `TcpServerSimple` is spliced into its own `Packet` in both
 directions (`vescinterface.cpp:218-224`), so:
 

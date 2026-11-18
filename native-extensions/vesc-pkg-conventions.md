@@ -104,6 +104,22 @@ What it needs, and what silently produces an empty config if missing:
 2. `<config_name>` with `<type>3</type>` (QSTRING) and
    `<valString>TailConfig</valString>`. Any other type silently falls back to
    a struct called `device_config`.
+
+   Also define **`<hw_name>`** (type `0`, `transmittable 0`, right after
+   `config_name`, like every reference package does). The tool reads it as
+   the page's display name, and up to and including 7.00 it dereferences it
+   *unchecked* in `mainwindow.cpp`'s `customConfigLoadDone` handler:
+   `getParam("hw_name")->longName` with `getParam` returning nullptr for a
+   missing param. A config without `hw_name` therefore crashes VESC Tool
+   with SIGSEGV right after connect (measured: within ~2 s, 100 % of
+   connects, reproduced under gdb). It is display-only, so the wire format
+   and the C struct do not change.
+
+   When the served XML changes, delete the tool's stale cache once so it
+   refetches: `~/.local/share/VESC/VESC Tool/hw_cache/<hwConfCrc>/
+   conf_custom_N.bin`. The cache is keyed by the hardware-config CRC only,
+   so a same-CRC device with new XML would otherwise serve the old page
+   forever.
 3. **`<SerOrder>`**, a sibling of `<Params>`, listing every serialized field
    as `<ser>name</ser>`. Without it the parser has an empty field list:
    `SERIALIZED_CONFIG_LENGTH` comes out as 4 (the signature only) and

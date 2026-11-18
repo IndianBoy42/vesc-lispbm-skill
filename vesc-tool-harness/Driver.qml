@@ -69,6 +69,8 @@ Item {
     // ---- connection -------------------------------------------------------
     property string port: ""
     property int    canFwd: -1
+    // USB CDC ignores the baud, but connectSerial takes one.
+    property int    serialBaud: 115200
     property bool   connecting: false
     property bool   shuttingDown: false
     property bool   ready: false
@@ -288,15 +290,26 @@ Item {
         Qt.quit()
     }
 
+    // Two transports, selected by the --vescPort URL: tcp://host:port attaches
+    // to a VESC Tool window's TCP server; serial:///dev/ttyACM0 (or a bare
+    // /dev/ path) attaches straight to the device and needs no tool window.
     function connectNow() {
-        if (connecting || port.indexOf("tcp://") !== 0) return
-        connecting = true
-        var rest = port.substring(6)
-        var sep = rest.lastIndexOf(":")
-        log("STATE", "connectTcp " + rest)
-        VescIf.connectTcp(rest.substring(0, sep), parseInt(rest.substring(sep + 1)))
-        connecting = false
-    }
+        if (connecting) return
+        if (port.indexOf("tcp://") === 0) {
+            connecting = true
+            var rest = port.substring(6)
+            var sep = rest.lastIndexOf(":")
+            log("STATE", "connectTcp " + rest)
+            VescIf.connectTcp(rest.substring(0, sep), parseInt(rest.substring(sep + 1)))
+            connecting = false
+        } else if (port.indexOf("serial://") === 0 || port.indexOf("/dev/") === 0) {
+            connecting = true
+            var dev = port.replace("serial://", "")
+            log("STATE", "connectSerial " + dev)
+            VescIf.connectSerial(dev, serialBaud)
+            connecting = false
+        }
+     }
 
     // ---- commands.txt -----------------------------------------------------
     // Line protocol, one command per line:
@@ -605,8 +618,9 @@ Item {
             port = port.substring(0, hash)
         }
 
-        if (port.indexOf("tcp://") !== 0) {
-            log("STATE", "need --vescPort tcp://host:port; got [" + port + "]")
+        if (port.indexOf("tcp://") !== 0 &&
+                port.indexOf("serial://") !== 0 && port.indexOf("/dev/") !== 0) {
+            log("STATE", "need --vescPort tcp://host:port or serial:///dev/<dev>; got [" + port + "]")
             Qt.quit()
             return
         }

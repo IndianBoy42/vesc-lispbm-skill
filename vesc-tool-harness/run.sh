@@ -123,14 +123,22 @@ case "$verb" in
     attach|daemon)
         [[ "${1:-}" == "$verb" ]] && shift
         need_tool
-        host="${1:-127.0.0.1}"; port="${2:-65102}"
+        # A URL passes through unchanged: tcp://h:p attaches to a VESC Tool
+        # window's server, serial:///dev/ttyX (or a bare /dev path) attaches
+        # straight to the device with no tool window at all.
+        url="${1:-tcp://127.0.0.1:65102}"
+        case "$url" in
+            tcp://*|serial://*|/dev/*) ;;
+            *) url="tcp://${url}:${2:-65102}" ;;
+        esac
+        case "$url" in *'#'*) ;; *) url="$url#daemon" ;; esac
         : > "$CMD"
         : > "$LOG"
-        echo "attaching to $host:$port; commands via: $0 send|ask '<expr>'" >&2
+        echo "attaching to $url; commands via: $0 send|ask '<expr>'" >&2
         echo "replies also append to $LOG" >&2
         # The "#daemon" fragment carries the mode, because vesc_tool refuses
         # any flag it does not define, so it cannot be a separate --flag.
-        attach "tcp://$host:$port#daemon" "tee"
+        attach "$url" "tee"
         ;;
     once)
         need_tool
