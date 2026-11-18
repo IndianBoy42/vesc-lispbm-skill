@@ -119,4 +119,23 @@
 		<ser>example_enabled</ser>
 		<ser>example_mode</ser>
 	</SerOrder>
+	<!-- The page layout: the custom-config page renders ONLY the "General"
+	     group's subgroups (pagecustomconfig.cpp - one tab per subgroup,
+	     one row per param). Without a Grouping section the pane is empty
+	     even though the params exist and the data round-trip works.
+	     Presentational only: SerOrder above still owns the wire. -->
+	<Grouping>
+		<group>
+			<groupName>General</groupName>
+			<subgroup>
+				<subgroupName>Examples</subgroupName>
+				<subgroupParams>
+					<param>example_gain</param>
+					<param>example_cycles</param>
+					<param>example_enabled</param>
+					<param>example_mode</param>
+				</subgroupParams>
+			</subgroup>
+		</group>
+	</Grouping>
 </ConfigParams>
