@@ -113,18 +113,25 @@ Sanity checks after any edit:
    handler, so without it the tool **segfaults right after connect**
    (measured: within ~2 s, every connect; signature: `"hw_name" not
    found` twice, then SIGSEGV).
-2. **A served-XML change clears the tool's cache once**:
-   `~/.local/share/VESC/VESC Tool/hw_cache/<hwConfCrc>/conf_custom_N.bin`.
-   The cache is keyed by the hardware-config CRC alone, so a same-CRC
-   device with new XML serves the stale page forever.
-3. **Doubles are 16-bit fixed point** with their `vTxDoubleScale`, so
+2. **A transmittable flag is int 0/1, never a bool or enum.** The
+   served-page emitter (`ConfigParams::getParamsXML`) writes `<vTx>` only
+   for double and int params; bool/enum/bitfield lose it, the tool
+   defaults their vTx to `VESC_TX_UNDEFINED`, and the page-signature
+   check in `deSerialize` diverges from the generator's - every connect
+   raises "Could not deserialize custom config 0", on every tool version,
+   including after the XML itself is re-fetched. The page's *load* still
+   succeeds, so a `loaded` check never catches it; verify by actually
+   reading values in the page UI. Int 0/1 with `vTx` 1 keeps the 1-byte
+   wire and hashes identically on both ends.
+3. **A served-XML change clears the tool's cache once**:
+4. **Doubles are 16-bit fixed point** with their `vTxDoubleScale`, so
    `|value| * scale <= 32767` over the whole UI range; the scale is both
    the resolution and the range budget. A double without a
    double16/32 `vTx` prints `Serialization type not supported`.
-4. **Defaults print with 6 significant digits**: a host test comparing
+5. **Defaults print with 6 significant digits**: a host test comparing
    XML defaults against C defaults needs ~2e-5 relative tolerance, which
    still catches real drift.
-5. **The blob pointer rule depends on the build.** Without LTO the
+6. **The blob pointer rule depends on the build.** Without LTO the
    symbol's GOT entry holds the bare link-time address (the image links
    at 0), so the pointer needs `+ PROG_ADDR` at runtime. With LTO the
    reference is pc-relative and already carries the image base — adding
@@ -132,11 +139,11 @@ Sanity checks after any edit:
    (VescTail's `diag 11` crashed the device exactly this way after
    adopting LTO). Whichever form you use, prove it on hardware: checksum
    `len` bytes at the pointer against the ELF.
-6. **Registration can fail silently**: the firmware validates callbacks
+7. **Registration can fail silently**: the firmware validates callbacks
    with `utils_is_func_valid` (flash 0x08000000..+1MB, RAM
    0x20000000..+128KB, CCM 0x10000000..+64KB). If it rejects one,
    `COMM_GET_CUSTOM_CONFIG` (93) never answers.
-7. Type codes, for params the template does not show: `1` double, `2`
+8. Type codes, for params the template does not show: `1` double, `2`
    int, `3` QString, `4` enum, `5` bool, `6` bitfield; `vTx`: `1` uint8,
    `2` int8, `3` uint16, `4` int16, `5` uint32, `6` int32, `7` double16,
    `8` double32, `9` double32_auto.

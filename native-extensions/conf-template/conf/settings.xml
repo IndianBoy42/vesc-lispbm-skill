@@ -72,32 +72,43 @@
 			<showDisplay>0</showDisplay>
 			<vTx>4</vTx>
 		</example_cycles>
-		<!-- bool, one byte on the wire (vTx 1) -->
+		<!-- A flag is int 0/1, never a served bool: getParamsXML drops <vTx>
+		     from bool/enum/bitfield params, the tool then defaults their vTx
+		     to UNDEFINED, and the page-signature check ("Could not
+		     deserialize custom config 0") fails forever. Ints keep their
+		     vTx, so int 0/1 with vTx 1 is one byte on the wire and sound. -->
 		<example_enabled>
 			<longName>Enable output</longName>
-			<type>5</type>
+			<type>2</type>
 			<transmittable>1</transmittable>
-			<description>Example bool parameter.</description>
+			<description>Example flag parameter. 0 = off, 1 = on.</description>
 			<cDefine>CFG_DFLT_EXAMPLE_ENABLED</cDefine>
+			<editorScale>1</editorScale>
+			<editAsPercentage>0</editAsPercentage>
 			<maxInt>1</maxInt>
 			<minInt>0</minInt>
+			<showDisplay>0</showDisplay>
 			<stepInt>1</stepInt>
 			<valInt>1</valInt>
 			<suffix></suffix>
-			<editAsPercentage>0</editAsPercentage>
-			<showDisplay>0</showDisplay>
 			<vTx>1</vTx>
 		</example_enabled>
-		<!-- enum, one byte on the wire: the value is the enumNames index -->
+		<!-- Same rule for the mode index: int, not enum (see above). -->
 		<example_mode>
 			<longName>Operating mode</longName>
-			<type>4</type>
+			<type>2</type>
 			<transmittable>1</transmittable>
-			<description>Example enum parameter.</description>
+			<description>Example mode-index parameter. 0 = TEMPLATE_MODE_OFF, 1 = TEMPLATE_MODE_ON.</description>
 			<cDefine>CFG_DFLT_EXAMPLE_MODE</cDefine>
+			<editorScale>1</editorScale>
+			<editAsPercentage>0</editAsPercentage>
+			<maxInt>1</maxInt>
+			<minInt>0</minInt>
+			<showDisplay>0</showDisplay>
+			<stepInt>1</stepInt>
 			<valInt>0</valInt>
-			<enumNames>TEMPLATE_MODE_OFF</enumNames>
-			<enumNames>TEMPLATE_MODE_ON</enumNames>
+			<suffix></suffix>
+			<vTx>1</vTx>
 		</example_mode>
 	</Params>
 	<!-- The serialization order: exactly the transmittable params, in this
