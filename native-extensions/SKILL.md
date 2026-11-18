@@ -283,3 +283,10 @@ layout and `can-send-sid`/`event-can-eid`, and the measured extension-name
 budget: shipped libs register 1-5 names). Read it before designing a new
 extension's surface, and before inventing a convention this platform already
 has.
+
+If you are generating a settings page, its checklist is mandatory reading:
+`vesc-pkg-conventions.md` § "Generating the settings page". Item 3 is not
+cosmetic — a page without `hw_name` segfaults VESC Tool on connect, and the
+tool caches the served XML by hardware CRC, so an XML change also needs a
+cache clear. VescTail shipped without `hw_name` once and crashed the user's
+tool on every connect.

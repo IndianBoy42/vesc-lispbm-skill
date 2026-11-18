@@ -105,47 +105,50 @@ What it needs, and what silently produces an empty config if missing:
    `<valString>TailConfig</valString>`. Any other type silently falls back to
    a struct called `device_config`.
 
-   Also define **`<hw_name>`** (type `0`, `transmittable 0`, right after
-   `config_name`, like every reference package does). The tool reads it as
-   the page's display name, and up to and including 7.00 it dereferences it
-   *unchecked* in `mainwindow.cpp`'s `customConfigLoadDone` handler:
-   `getParam("hw_name")->longName` with `getParam` returning nullptr for a
-   missing param. A config without `hw_name` therefore crashes VESC Tool
-   with SIGSEGV right after connect (measured: within ~2 s, 100 % of
-   connects, reproduced under gdb). It is display-only, so the wire format
-   and the C struct do not change.
+3. **`<hw_name>` is mandatory — the tool crashes without it.** Define it
+   right after `config_name` (type `0`, `transmittable 0`, like every
+   reference package does); the tool shows its `longName` as the page's
+   display name. Up to and including VESC Tool 7.00 the
+   `customConfigLoadDone` handler in `mainwindow.cpp` runs
+   `getParam("hw_name")->longName` unchecked, and `getParam` returns nullptr
+   for a missing param. A config without `hw_name` therefore **segfaults
+   VESC Tool right after connect** — measured: within ~2 s, every connect,
+   reproduced under gdb. The failure signature to grep for:
+   `"hw_name" not found` twice in the tool's console, then SIGSEGV. It is
+   display-only: the wire format and the C struct do not change, but the
+   XML blob grows, so re-check the image against the load cap.
 
-   When the served XML changes, delete the tool's stale cache once so it
-   refetches: `~/.local/share/VESC/VESC Tool/hw_cache/<hwConfCrc>/
-   conf_custom_N.bin`. The cache is keyed by the hardware-config CRC only,
-   so a same-CRC device with new XML would otherwise serve the old page
-   forever.
-3. **`<SerOrder>`**, a sibling of `<Params>`, listing every serialized field
+   **When the served XML changes, clear the tool's cache once**:
+   `~/.local/share/VESC/VESC Tool/hw_cache/<hwConfCrc>/conf_custom_N.bin`.
+   The cache is keyed by the hardware-config CRC alone, so a same-CRC
+   device with new XML serves the stale page forever — an old page is
+   indistinguishable from a failed update.
+4. **`<SerOrder>`**, a sibling of `<Params>`, listing every serialized field
    as `<ser>name</ser>`. Without it the parser has an empty field list:
    `SERIALIZED_CONFIG_LENGTH` comes out as 4 (the signature only) and
    nothing is generated for the page. A name in `<SerOrder>` that is absent
    from `<Params>` prints `"name" not found`.
-4. Type codes: `1` double, `2` int, `3` QString, `4` enum, `5` bool,
+5. Type codes: `1` double, `2` int, `3` QString, `4` enum, `5` bool,
    `6` bitfield (`CFG_T` in the tool's `datatypes.h`). `vTx` codes:
    `1` uint8, `2` int8, `3` uint16, `4` int16, `5` uint32, `6` int32,
    `7` double16, `8` double32, `9` double32_auto. A double without a
    double16/32 `vTx` prints `Serialization type not supported`.
-5. **Doubles are 16-bit fixed point**: `(int16_t)(value * vTxDoubleScale)`.
+6. **Doubles are 16-bit fixed point**: `(int16_t)(value * vTxDoubleScale)`.
    So `|value| * scale <= 32767` for the whole UI range, and the scale is
    both the precision and the range budget. Pick per parameter; a range
    spanning five decades cannot survive, so narrow the UI range and keep
    the wider C clamp in code. Saturation in your own `buffer_append_float16`
    keeps an out-of-range value from wrapping to the wrong sign.
-6. Defaults are printed with 6 significant digits, so the generated
+7. Defaults are printed with 6 significant digits, so the generated
    `confparser_set_defaults_*` can differ from a C literal in the 6th digit.
    A unit test comparing XML defaults against C defaults needs ~2e-5
    relative tolerance, which still catches real drift.
-7. `get_cfg_xml` returns the blob as `data_tailconfig_ + PROG_ADDR` — the
+8. `get_cfg_xml` returns the blob as `data_tailconfig_ + PROG_ADDR` — the
    address in the image is link-time (0-relative). Keep the array `const`
    (patch the generated `.c`, or it lands in `.data`, which a flash image
    must not have) and prove the pointer on hardware by checksumming
    `len` bytes at it against the ELF.
-8. The callbacks must be in flash or RAM: the firmware validates them with
+9. The callbacks must be in flash or RAM: the firmware validates them with
    `utils_is_func_valid` (0x08000000..+1MB flash, 0x20000000..+128KB RAM,
    0x10000000..+64KB CCM). Registration is silent when it fails, and
    `COMM_GET_CUSTOM_CONFIG` (93) then never answers.
