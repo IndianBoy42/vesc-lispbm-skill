@@ -122,7 +122,14 @@ Sanity checks after any edit:
    including after the XML itself is re-fetched. The page's *load* still
    succeeds, so a `loaded` check never catches it; verify by actually
    reading values in the page UI. Int 0/1 with `vTx` 1 keeps the 1-byte
-   wire and hashes identically on both ends.
+   wire and hashes identically on both ends. This is systemic, not local:
+   an audit of `vesc_pkg` found every shipped page with a custom config
+   (balance, float, refloat, tnt) plus the `c_libs/examples/config`
+   reference carrying transmittable bools/enums - none of those pages
+   has ever passed the deserialize check. Users rarely notice because
+   the dialog appears only when the raw page is read, and the packages'
+   own QML UIs bypass it. The example is fixed; `audit_conf.py` in
+   `conf-template/` encodes this check and the others below.
 3. **The page renders only the `<Grouping>` section.** The custom-config
    page builds its UI from the "General" group's subgroups
    (`pagecustomconfig.cpp`): one tab per subgroup, one row per param. A
@@ -142,19 +149,36 @@ Sanity checks after any edit:
 6. **Defaults print with 6 significant digits**: a host test comparing
    XML defaults against C defaults needs ~2e-5 relative tolerance, which
    still catches real drift.
-7. **The blob pointer rule depends on the build.** Without LTO the
-   symbol's GOT entry holds the bare link-time address (the image links
-   at 0), so the pointer needs `+ PROG_ADDR` at runtime. With LTO the
-   reference is pc-relative and already carries the image base — adding
-   `PROG_ADDR` double-counts it and the first blob read hard-faults
-   (VescTail's `diag 11` crashed the device exactly this way after
-   adopting LTO). Whichever form you use, prove it on hardware: checksum
-   `len` bytes at the pointer against the ELF.
-8. **Registration can fail silently**: the firmware validates callbacks
+7. **The blob pointer form follows symbol resolution, not LTO.** The
+   runtime pointer is right exactly when base + link-offset comes out:
+   a GOT-based reference reads the bare link-time address from the
+   statically-initialized slot, so it needs `+ PROG_ADDR`. A pc-relative
+   reference already carries the image base, so `+ PROG_ADDR`
+   double-counts it and the first blob read hard-faults. What decides
+   which one you get is whether the build localizes the symbol:
+   `-fvisibility=hidden` under LTO forces the pc-relative form (VescTail
+   crashed this way after adopting both), while refloat builds with LTO
+   but without hidden visibility and its `+ PROG_ADDR` is correct. Never
+   infer the form from flags: prove it on hardware by checksumming `len`
+   bytes at the pointer against the ELF.
+8. **The declared UI range must fit the wire type.** The stock codecs
+   wrap silently: `buffer_append_uint16` takes a `uint16_t` (the int
+   truncates), and `buffer_append_float16` casts to `int16_t` - values
+   past ±32767 flip sign, they do not saturate. A UI range wider than
+   the wire lets the user set a value that comes back aliased. In the
+   wild: `ki`/`tiltback_constant` (|range| x scale 50000/80000 on
+   double16), tnt's `kalman_factor1..3` (x1e6), and the balance-family
+   erpm fields (max 100000 on uint16).
+9. **A `transmittable=0` param in SerOrder is the read-only info-field
+   pattern** (float's `float_version`, tnt's `version`): it rides the
+   wire, renders on the page, and only firmware changes the value. Not a
+   mistake - but the entry must exist as a param, and unknown SerOrder
+   names are always a bug.
+10. **Registration can fail silently**: the firmware validates callbacks
    with `utils_is_func_valid` (flash 0x08000000..+1MB, RAM
    0x20000000..+128KB, CCM 0x10000000..+64KB). If it rejects one,
    `COMM_GET_CUSTOM_CONFIG` (93) never answers.
-9. Type codes, for params the template does not show: `1` double, `2`
+11. Type codes, for params the template does not show: `1` double, `2`
    int, `3` QString, `4` enum, `5` bool, `6` bitfield; `vTx`: `1` uint8,
    `2` int8, `3` uint16, `4` int16, `5` uint32, `6` int32, `7` double16,
    `8` double32, `9` double32_auto.
