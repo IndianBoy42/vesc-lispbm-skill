@@ -124,9 +124,14 @@ Sanity checks after any edit:
 4. **Defaults print with 6 significant digits**: a host test comparing
    XML defaults against C defaults needs ~2e-5 relative tolerance, which
    still catches real drift.
-5. **The blob pointer needs `+ PROG_ADDR`** at runtime (the image links
-   at 0). Prove it on hardware by checksumming `len` bytes at it against
-   the ELF.
+5. **The blob pointer rule depends on the build.** Without LTO the
+   symbol's GOT entry holds the bare link-time address (the image links
+   at 0), so the pointer needs `+ PROG_ADDR` at runtime. With LTO the
+   reference is pc-relative and already carries the image base — adding
+   `PROG_ADDR` double-counts it and the first blob read hard-faults
+   (VescTail's `diag 11` crashed the device exactly this way after
+   adopting LTO). Whichever form you use, prove it on hardware: checksum
+   `len` bytes at the pointer against the ELF.
 6. **Registration can fail silently**: the firmware validates callbacks
    with `utils_is_func_valid` (flash 0x08000000..+1MB, RAM
    0x20000000..+128KB, CCM 0x10000000..+64KB). If it rejects one,
