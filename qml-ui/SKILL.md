@@ -134,6 +134,56 @@ Do not touch `QmlUi`. On mobile it does not exist, and on desktop it is
   text. Images must come from VESC Tool's own resources, for example
   `"qrc" + Utility.getThemePath() + "icons/Connected-96.png"`.
 
+## Driving the device, not just watching it
+
+The host gives the tab no device-side RPC call. The package pattern (logui,
+and the fishi tail tab) is: the UI sends **lisp source** as custom app data,
+the device script evaluates it, and replies come back through `send-data`.
+
+```qml
+function sendCode(s) { mCommands.sendCustomAppData(s + "\0") }   // NUL-terminate
+
+Connections {
+    target: mCommands
+    function onCustomAppDataReceived(data) {
+        if (data.byteLength === 36 && new DataView(data).getUint8(0) === 1)
+            parseTelemetry(data)            // binary frame from the script
+        else
+            parseReply(data.toString())     // lisp reply string
+    }
+}
+```
+
+```lisp
+(defun ev-handler ()
+  (loopwhile t
+    (recv ((event-data-rx . (? data)) (trap (eval (read data))))
+          (_ nil))))
+(event-register-handler (spawn ev-handler))
+(event-enable 'event-data-rx)
+```
+
+- `event-data-rx` is raised by the firmware's app-data handler
+  (`commands.c` calls `lispif_process_custom_app_data`), on the ESC and the
+  Express alike, once the script enables it. The handler thread is the only
+  new thread a command channel needs.
+- `send-data` takes a string or a byte array (≤100 B), so one signal carries
+  both text replies and binary telemetry. Tell them apart by length and a
+  version byte; never by "it looks like text".
+- **A GUI command needs its own deadman.** A lisp command is local to the
+  controller, so the controller's CAN command timeout does not cover a tool
+  that died mid-gait. Have the tab re-send intent at a few Hz and the device
+  script disarm on silence (the fishi tail bridge uses 1.5 s; the Express
+  companion 2 s). Closing VESC Tool must leave nothing armed.
+- **One file, two devices.** To cover two roles with one `ui.qml`, branch on
+  `VescIf.getLastFwRxParams().hw` (logui tests `hw.includes("Express")`) and
+  keep the device-specific half in each package's `pkgLisp`. Shared QML code
+  cannot be split across files, so the roles have to coexist in one file.
+- **`pkgLisp` overwrites the device's script.** On a controller that already
+  runs one (a native-extension runtime, an existing logger), ship QML only
+  and add the command handler to that script instead; installing a package
+  with `pkgLisp` replaces it.
+
 ## Limits
 
 | Limit | Value | Source |
