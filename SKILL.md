@@ -54,8 +54,9 @@ INIT_FUN(lib_info *info) {
    `image-save` writes the current heap out, `lbm-write`/`lbm-run` manage it by hand.
 3. Watch it: `plot-init` / `plot-add-graph` / `plot-send-points` feed VESC Tool's plot tab,
    `print` goes to the terminal, `(send-data ...)` sends custom app data (also readable
-   from a Qml script), and `log-config-field` + `log-start -1` + `log-send-f32` writes a
-   proper log into VESC Tool instead of plotting.
+   from a Qml script), and `log-config-field` + `log-start` + `log-send-f32` writes a
+   proper log: `-1` streams it into VESC Tool, `-2` records to the Express SD card
+   (`express-logging/SKILL.md`).
 4. `(stats)` in the terminal gives heap use, GC counters and the GC stack high-water mark —
    the first thing to check when a long-running script behaves oddly or restarts.
 5. **An upload can report `FAILED` and still have worked.** The firmware stops LispBM and
@@ -319,5 +320,8 @@ python3 qml-ui/gen_qml_refs.py --vesc-tool-root ~/dev/vesc_tool
   (desktop, Android, iOS), the flash slot and package format that deploy it, a
   working template package, and generated tables of the QML API. Read before
   touching a package's `ui.qml` or debugging a GUI that does not appear
+- `express-logging/SKILL.md` — **SD logging**: the `log-*` API with `can-id -2`,
+  feeding fields from CAN status polls or custom `event-can-eid` frames, EEPROM
+  settings and at-boot logging, and why a log comes out empty
 - `native-extensions/SKILL.md` — C extension development guide
 - `native-extensions/vesc_c_if_api.md` — Auto-generated VESC C interface API reference
