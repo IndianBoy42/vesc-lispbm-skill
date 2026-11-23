@@ -1,0 +1,5 @@
+(list (car (tail-status)) (ext-tail-param tail-state 27))
+(tail-appdiv 20)
+(ext-tail-param tail-state 27)
+(tail-appdiv 0)
+:quit

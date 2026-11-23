@@ -1,0 +1,51 @@
+:ping
+:info
+(list (ext-tail-abi) (car (tail-status)) (car (cdr (tail-status))))
+:stats
+:can scan
+:can 2 (list (sysinfo 'hw-type) (sysinfo 'fw-version))
+:can 2 (list (sysinfo 'hw-name) (sysinfo 'fw-ver) (sysinfo 'part-running))
+:can 2 (f-ls "/sdcard/")
+:can 2 (f-ls "")
+:can 2 (list (sysinfo (quote hw-name)) (f-ls ""))
+:can 2 (f-ls "log_can")
+:can 2 (f-size "TAIL.CSV")
+:can 2 (f-size "LOGS.TXT")
+:can 2 (stats)
+:can 2 (let ((f (f-open "TAIL.CSV" "r"))) (let ((l (f-readline f 200))) (f-close f) l))
+:can 2 (let ((f (f-open "CMDS.TXT" "r"))) (let ((l (f-readline f 200))) (f-close f) l))
+:can 2 (let ((f (f-open "LOGS.TXT" "r"))) (let ((l (f-readline f 200))) (f-close f) l))
+:can 2 (tail-ping)
+:can upload 2 /home/anshuman/dev/fishi-h7-nxt/VescTail/ui/tail_express.lisp
+:can 2 (list lg-run lg-rate cmd-node ctl-on t-ok t-hb)
+(def can-tx-enable 1)
+(list tx-count tx-gap-max tx-skip)
+(list tx-count tx-gap-max tx-skip)
+can-tx-enable
+(list tx-last (systime))
+(list tx-count tx-skip can-tx-enable)
+:can 2 (list t-ok t-hb t-gait t-pos t-freq)
+(def tx-skip 0)
+(list tx-count tx-skip)
+(list tx-count tx-skip tx-gap-max)
+:can 2 (list t-ok t-hb t-gait t-pos t-freq)
+:can 2 (let ((b (bufcreate 8))) (bufset-u8 b 0 4) (bufset-u8 b 1 9) (bufset-u16 b 2 4660 (quote little-endian)) (bufset-f32 b 4 2.5 (quote little-endian)) (rx-frame 353370112 b) (list t-gait t-hb t-freq t-bits))
+:can 2 (list t-ok t-hb t-freq t-z1 t-z2 t-z3 t-vel t-u t-pos t-bits)
+:can 2 (let ((b (bufcreate 8))) { (bufset-u8 b 0 4) (bufset-u8 b 1 9) (bufset-u16 b 2 4660 (quote little-endian)) (bufset-f32 b 4 2.5 (quote little-endian)) (rx-frame 353370112 b) (list t-gait t-hb t-freq t-bits) })
+(def can-tx-enable 0)
+(let ((b (bufcreate 8))) { (bufset-u8 b 0 4) (bufset-u8 b 1 9) (bufset-u16 b 2 4660 'little-endian) (bufset-f32 b 4 2.5 'little-endian) (can-send-eid 353370112 b) (print "sent") })
+:can 2 (list t-ok t-gait t-hb t-freq t-bits)
+:can upload 2 /home/anshuman/dev/fishi-h7-nxt/VescTail/ui/tail_express.lisp
+(def can-tx-enable 1)
+:can 2 (list dbg-id dbg-len dbg-b0 dbg-b1 t-hb t-freq)
+:ping
+(def can-tx-enable 1)
+:can 2 (list lg-run t-ok dbg-id dbg-len dbg-b0 dbg-b1)
+(list tx-count tx-skip)
+(list tx-count tx-skip tx-gap-max)
+:can 2 (list t-hb t-freq t-z1 t-pos t-u)
+(list tx-count can-tx-enable)
+:can off
+(list tx-count can-tx-enable tx-skip)
+:can 2 (list 1 2 3)
+:info

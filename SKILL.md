@@ -147,6 +147,14 @@ See `ref/` directory for section-by-section language reference extracted from `l
 - **`defun` takes exactly one body expression.** `(defun f (x) a b)` defines the body as `a`
   and silently drops `b`; wrap multi-statement bodies in `{ ... }`.
 - **No scientific notation.** `1e-9` reads as the symbol `e-9`, not a number.
+- **Integers above 2^24 are not exact through a float.** A 29-bit CAN EID
+  (3.5e8) in float32 has a spacing of 32, so `(+ eid 1)` returns `eid` and
+  six frames all go out with the same id. The snapshot getters return
+  floats; run ids, counters and frame offsets through `to-i32` first.
+- **Sleep granularity is a scheduler tick, not the seconds you asked for.**
+  A 5 ms `sleep` on the Express behaves like 10 ms (or coarser), so a
+  lisp loop that must outpace a 200 Hz consumer cannot; pace the consumer
+  lower or send two samples per period.
 - **`def`/`define` write the global environment**, from anywhere, including inside a
   function or a `{}` block. Use `let` for anything local.
 - **`bufget-f32`/`bufset-f32` index in bytes**, not elements: element `i` is at `(* 4 i)`.
