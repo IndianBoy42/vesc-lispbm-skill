@@ -60,6 +60,41 @@ Every extension file must have:
 3. **`INIT_FUN(lib_info *info)`** — Init function called when library is loaded
 4. **`INIT_START`** — Macro at the start of init function
 
+### Load the image with `(import ...)`, not an array literal
+
+The image file goes into the script's **import table**, not into a lisp array:
+
+```lisp
+(import "tail.bin" 'tail)   ; uploaded file is packed beside the script
+(load-native-lib tail)
+```
+
+How it works: `CodeLoader::lispPackImports` (`vesc_tool/codeloader.cpp:173`)
+appends the file bytes and a name/offset/length table to the script; at boot
+`lispif.c:794-811` walks that table and calls
+`lbm_share_array_const(&val, code_data + offset, len)`
+(`lispBM/src/lbm_c_interop.c`), which writes only an 8-byte array header into
+the const heap and points its data at the **script-flash** bytes. The array is
+then a normal const array for `load-native-lib`, and the extension executes
+from flash in place. The LBM pool sees no image bytes at all, so the load
+ceiling becomes the 128 KiB script region instead of ~20.7 KB.
+
+Shipped packages already do this: `vesc_pkg/balance/balance.lisp` and
+`vesc_pkg/tnt/tnt.lisp` open with exactly these two lines.
+
+Two conditions:
+
+- **The upload must pack imports.** `vesc_tool --uploadLisp`, the
+  vesc-tool-harness `:upload` (both call `lispUploadFromPath`) and package
+  installs do; streaming the text with `lispWriteCode` does not, and the tag
+  stays unbound.
+- **The file must exist next to the script at pack time** (`import "tail.bin"`
+  resolves relative to the script's directory).
+
+The rest of this section is the array-literal path, kept because it explains
+where the old ~20.7 KB number came from and why a literal must never be used
+for an image.
+
 ### A const-heap image still needs one contiguous pool block at load
 
 Not a pool fraction, and not arbitrary: it is `0.9 x longest_free`, and
@@ -162,7 +197,7 @@ All VESC functions are accessed through the `VESC_IF` macro, which is a pointer 
 
 ### Loading
 ```lisp
-(def my-lib [0x01 0x02 ...])  ; byte array from conv.py output
+(import "my-lib.bin" 'my-lib)  ; packed into the script's import table
 (load-native-lib my-lib)       ; calls INIT_FUN, returns t on success
 ```
 
