@@ -61,7 +61,7 @@ INIT_FUN(lib_info *info) {
    the first thing to check when a long-running script behaves oddly or restarts.
 5. **An upload can report `FAILED` and still have worked.** The firmware stops LispBM and
    erases two flash regions before streaming a byte, then runs the whole restart and parse
-   inside the first chunk's acknowledgement (`comm/commands.c:1403`, `lispBM/lispif.c:494`),
+   inside the first chunk's acknowledgement (`comm/commands.c`, `COMM_LISP_ERASE_CODE`/`COMM_LISP_STREAM_CODE` handlers; `lispBM/lispif.c`, `lispif_process_cmd`),
    while the host waits 8 s for the erase and 4 s per chunk. Verified: four uploads spaced
    45 s apart succeeded in ~3 s each, const block or not; three back-to-back failed 3/3. So:
    keep the uploaded file small (strip comments), do one upload at a time, do not queue
@@ -87,10 +87,10 @@ before relying on it.
 
 Two facts about the device that matter whichever way you drive it:
 
-- `COMM_LISP_GET_STATS` suspends the evaluator (`vesc/lispBM/lispif.c:252` calls
-  `pause_eval(0, 2000)`), so stats polling is jitter in your script's sample period.
+- `COMM_LISP_GET_STATS` suspends the evaluator (`lispBM/lispif.c`, the
+  `pause_eval(0, 2000)` call in `lispif_process_cmd`), so stats polling is jitter in your script's sample period.
 - Nothing can poll it faster than 1 Hz: `Commands::lispGetStats` self-throttles for 1 s
-  (`vesc_tool:commands.cpp:2244`). The GUI's poll-rate spinbox is cosmetic.
+  (`vesc_tool/commands.cpp`, the `lispGetStats` method). The GUI's poll-rate spinbox is cosmetic.
 
 ## Architecture
 

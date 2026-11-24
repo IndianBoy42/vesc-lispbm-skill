@@ -69,9 +69,9 @@ The image file goes into the script's **import table**, not into a lisp array:
 (load-native-lib tail)
 ```
 
-How it works: `CodeLoader::lispPackImports` (`vesc_tool/codeloader.cpp:173`)
+How it works: `CodeLoader::lispPackImports` (`vesc_tool/codeloader.cpp`)
 appends the file bytes and a name/offset/length table to the script; at boot
-`lispif.c:794-811` walks that table and calls
+`lispif.c`'s import-walking loop (grep `lbm_share_array_const` in `lispif.c`) calls
 `lbm_share_array_const(&val, code_data + offset, len)`
 (`lispBM/src/lbm_c_interop.c`), which writes only an 8-byte array header into
 the const heap and points its data at the **script-flash** bytes. The array is
@@ -95,6 +95,13 @@ The rest of this section is the array-literal path, kept because it explains
 where the old ~20.7 KB number came from and why a literal must never be used
 for an image.
 
+Image format caveat: firmware 7.00 ships lispBM **0.36.0** (6.06 shipped 0.33.1).
+0.35.0 changed how const-heap indices are computed and 0.34.0 fixed
+`next_symbol_id` recreation on image load, so an image saved by a 6.06 device
+(`image-save` output) is **not** guaranteed to load on 7.00. Rebuild/re-save
+images on the 7.00 device; treat the image format as volatile per lispBM
+version (`ref/firmware-volatile-values.md`).
+
 ### A const-heap image still needs one contiguous pool block at load
 
 Not a pool fraction, and not arbitrary: it is `0.9 x longest_free`, and
@@ -104,11 +111,11 @@ words = 28,672 B):
 
 | step | source | bytes |
 |---|---|---|
-| pool | `lispif.c:36` | 28,672 |
+| pool | `memory_array[]` sized by `LISP_MEM_SIZE` in `lispif.c` | 28,672 |
 | VM's own state after an upload, before the script runs (`:info` during a `(sleep 8)` at the top: 0 arrays, 4 cons cells) | measured | −2,800 |
-| 10 % reserve, `memory_reserve_level = 0.1 x words` | `lbm_memory.c:91` | −2,864 |
-| **longest free run** (`:info` prints 23,008, and `lbm_memory_longest_free()` subtracts the reserve at `lbm_memory.c:217-224`) | measured | 23,008 |
-| reader's scratch, `initial_size = 0.9 x longest_free`, words x `sizeof(lbm_uint)` | `eval_cps.c:4556-4567` | **20,707** |
+| 10 % reserve, `memory_reserve_level = 0.1 x words` (`lbm_memory.c`, `lbm_memory_set_reserve_percent`) | computed | −2,864 |
+| **longest free run** (`:info` prints 23,008; `lbm_memory_longest_free()` subtracts the reserve) | measured | 23,008 |
+| reader's scratch, `initial_size = 0.9 x longest_free`, words x `sizeof(lbm_uint)` (`eval_cps.c`, `cont_read_start_bytearray`) | computed | **20,707** |
 
 So the largest image that can be written as a `[...]` literal is 20,707 B
 (one byte less by the `ix >= size - 1` check). Measured: 20,700 boots, 21,000
@@ -133,15 +140,22 @@ fails. Three consequences worth knowing:
 ### Two hard limits that decide the extension's shape
 
 **1. Extension names are the scarcest resource.** The loader's table is
-`EXTENSION_STORAGE_SIZE` = 311 entries (`lispif.c:40`) and the firmware's own
-registrations leave room for roughly **fifteen** more. Overrunning it fails
-*silently* at registration, and then any *read* of an unregistered `ext-`
-symbol raises `fatal_error` from the reader — it tries to auto-register a stub,
-fails, and gives up (`eval_cps.c:4473`), so the failure looks like a crash
-rather than an unbound symbol. Symptom: some `ext-` names work, later ones
-report `fatal_error` with `Current: ~CHANNEL~` and `Starting at row: 1`, and
-even a never-seen name like `(ext-zzz)` does the same. Keep the surface small;
-put REPL diagnostics behind one selector argument instead of one name each.
+`EXTENSION_STORAGE_SIZE` = **322** entries in 7.00 (`lispif.c`, the `#define`
+block next to `HEAP_SIZE`) and the firmware registers **244** names in 7.00
+(229 in 6.06). Count them with
+`grep -c 'lbm_add_extension(' ../lispif_vesc_extensions.c`. The ~78 free
+slots look roomy, but every native lib and every re-load across boots spends
+them, and both numbers are **volatile** — re-check them on every firmware
+update (`ref/firmware-volatile-values.md`). Overrunning it fails *silently*
+at registration, and then any *read* of an unregistered `ext-` symbol raises
+`fatal_error` from the reader — it tries to auto-register a stub via
+`lbm_add_extension(ext_name, lbm_extensions_default)` in `eval_cps.c`'s
+extension-symbol path and gives up when the lookup fails, so the failure
+looks like a crash rather than an unbound symbol. Symptom: some `ext-` names
+work, later ones report `fatal_error` with `Current: ~CHANNEL~` and
+`Starting at row: 1`, and even a never-seen name like `(ext-zzz)` does the
+same. Keep the surface small; put REPL diagnostics behind one selector
+argument instead of one name each.
 
 **2. A flash-resident image (const heap) cannot have writable statics.** If the
 image is loaded inside `@const-start`, it runs from flash read-only: a C store
@@ -149,7 +163,7 @@ gives `fatal_error` and lisp refuses the array (`type_error`). The one
 writable cell such an image can reach is the loader's per-image `arg` slot:
 
 ```c
-/* vesc_c_if.h:699 - *VESC_IF->get_arg(PROG_ADDR) */
+/* vesc_c_if.h, the ARG macro near the end: *VESC_IF->get_arg(PROG_ADDR) */
 #define ARG  (*VESC_IF->get_arg(PROG_ADDR))
 ```
 

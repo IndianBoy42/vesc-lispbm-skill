@@ -41,11 +41,11 @@ scheduler bug.
 
 | pool | size on this firmware | holds | set by |
 |---|---|---|---|
-| cons heap | **22024 B = 2753 cells** (8 B each: car + cdr, 32-bit) | lists, pairs, closures, `let` bindings | `HEAP_SIZE`, `lispif.c:47` |
-| `LBM_MEMORY` | **28672 B**, bitmap allocator | arrays, strings, boxed floats, `dm` regions | `LISP_MEM_SIZE`, `lispif.c:48` |
-| flash image region | **128 KiB** | image, symbol table, const heap | `lbm_image_init`, `lispif.c:738` |
+| cons heap | **22000 B = 2750 cells** in 7.00 (8 B each: car + cdr, 32-bit). Stock 6.06 is 22088 B = 2761 cells; this file's older measured figures (22024 B / 2753) came from a local build. The size derives from `EXTENSION_STORAGE_SIZE` | lists, pairs, closures, `let` bindings | `HEAP_SIZE`, `lispif.c` `#define` block |
+| `LBM_MEMORY` | **28672 B**, bitmap allocator | arrays, strings, boxed floats, `dm` regions | `LISP_MEM_SIZE` (`LBM_MEMORY_SIZE_28K`) |
+| flash image region | **128 KiB** | image, symbol table, const heap | `lbm_image_init` call in `lispif.c`'s image-boot path |
 | symbol table | 756 B (flash) | symbol names | — |
-| GC stack | 160 words | mark stack | `GC_STACK_SIZE`, `lispif.c:51` |
+| GC stack | 160 words | mark stack | `GC_STACK_SIZE`, `lispif.c` `#define` block |
 
 The cons heap has no fragmentation problem (all cells are the same size), which is why
 lists are cheap and arrays are not. `LBM_MEMORY` is fragmentation-prone; `dm-create`
@@ -55,8 +55,8 @@ Both are fixed at compile time. A script cannot grow them; it can only use less.
 
 ### The evaluator's C stack (extension writers, read this first)
 
-The LispBM evaluator thread runs on a **2048-byte C stack** (`lispif.c:73`,
-`eval_thread_wa`). Every extension function called from lisp executes on
+The LispBM evaluator thread runs on a **2048-byte C stack** (`lispif.c`, `eval_thread_wa`).
+Every extension function called from lisp executes on
 it. A call chain that needs more than that corrupts the thread: the REPL
 stops answering while the console keeps flushing prints, a stored image
 restart-loops, and a firmware reboot follows. Verified on hardware with
@@ -124,7 +124,7 @@ driver that works and one that randomly stops.
 - Each global definition inside the block is copied to the const heap **as the reader
   parses it**, and the global is rebound to the flash copy.
 - Requires the incremental reader. VESC's `:upload` uses
-  `lbm_load_and_eval_program_incremental` (`lispif.c:829`), so it works there and not with
+  `lbm_load_and_eval_program_incremental` (in `lispif.c`), so it works there and not with
   plain `:load`-style reading.
 - Blocks **cannot nest**, and each needs its closing `@const-end`.
 - **No measurable call-time penalty**: 2000 calls of a one-line function took 2126 ticks
@@ -159,9 +159,9 @@ after the old one; the old copy is dead but unreclaimed.
 ### What an upload costs, and why it is not the const heap's fault
 
 Every LispBM upload calls `COMM_LISP_ERASE_CODE`, which stops LispBM and erases **both**
-the const region and the code region before streaming a byte (`comm/commands.c:1403`),
+the const region and the code region before streaming a byte (`comm/commands.c`, `COMM_LISP_ERASE_CODE` handler),
 and the first stream chunk runs the whole restart and parse **synchronously** before
-acking (`lispBM/lispif.c:494`). The host allows 8 s for the erase ack and 4 s per chunk
+acking (`lispBM/lispif.c`, `COMM_LISP_STREAM_CODE` handler). The host allows 8 s for the erase ack and 4 s per chunk
 ack (`vesc_tool/codeloader.cpp`).
 
 Measured on a stable link: a 7 KB script uploads in 2.9 s, a 10 KB one in 3.1-3.5 s,
@@ -173,7 +173,7 @@ uploads small and spaced, and never queue REPL commands behind one.
 
 Consequences for a ~23 KB driver: roughly **5 reboots** fit in the 128 KiB region. When the
 region fills, the const write fails, `lispif` erases the const region on the next restart
-(`lispif.c:710`) and rebuilds it — a slower boot plus a flash erase cycle, self-healing but
+(`lispif.c`'s `lispif_restart`) and rebuilds it — a slower boot plus a flash erase cycle, self-healing but
 not free. `:upload` that creates a new image erases first, so development is unaffected.
 Budget reboots accordingly, or wrap only the largest definitions.
 
@@ -187,7 +187,7 @@ Budget reboots accordingly, or wrap only the largest definitions.
 - `dm-create n` reserves `n` bytes; `dm-alloc`/`bufcreate` inside it hands out byte arrays
   that are **defragmented as a group** when an allocation fails, so a long-running script
   cannot lose `LBM_MEMORY` to fragmentation.
-- Each array takes **12 bytes of header** inside the region (`lbm_defrag_mem.c:35`), so
+- Each array takes **12 bytes of header** inside the region (see `lbm_defrag_mem.c`'s data-layout comment), so
   size the region with that overhead: 90 bytes of buffers needed `dm-create 256`; 224 and
   240 both failed.
 - Buffers cost **zero cons cells** (only the pointer binding). Plain `bufcreate n` also
@@ -305,7 +305,7 @@ for the zero-argument case.
 
 ### The GC cliff
 
-`def`-shaped retention of cons cells while the heap fills (2753 cells, 22 KiB):
+`def`-shaped retention of cons cells while the heap fills (2750 cells on stock 7.00; the table below was measured on a 2753-cell local build, ~22 KiB):
 
 | live cells | us per additional cons |
 |---|---|
@@ -315,7 +315,7 @@ for the zero-argument case.
 | 2400 live (~87%) | 106 |
 
 Retaining live data makes every allocation pay a mark-sweep: a 8-10x cliff, and past
-2753 live cells allocation fails outright. Budget live cells, not just allocations.
+the cell limit, allocation fails outright. Budget live cells, not just allocations.
 
 ### Split guidance that falls out of it
 
@@ -344,7 +344,7 @@ library must fit the 28 KiB LBM array pool *while being parsed*.
   chars/byte, so the ~131 KB region caps the binary at ~26 KB (a 27.8 KB binary yields a
   140 KB file and is rejected before flashing). Decimal tokens are ~3.6 chars/byte and
   raise the ceiling to ~35 KB; see `VescTail/pack.py` for a drop-in replacement.
-- **Extension storage is 319 slots total** (`EXTENSION_STORAGE_SIZE`), shared by all
+- **Extension storage is 322 slots in 7.00** (311 in 6.06; `EXTENSION_STORAGE_SIZE`), shared by all
   libraries and never reclaimed on unload; `:info` shows the count. Loading many libraries
   (or re-loading one across boots) can exhaust it.
 - **Binary fat that sneaks in.** The soft-double library costs ~2.4 KB: one `roundf()`

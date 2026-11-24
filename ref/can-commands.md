@@ -14,7 +14,7 @@ Paths are relative to the firmware checkout root (this file lives in `lispBM/ski
 
 ## The receive path
 
-`comm/comm_can.c:1390-1421`, `cancom_process_thread` (NORMALPRIO, 2 KB stack — `comm/comm_can.c:65,195`):
+`comm/comm_can.c:1390-1421` (the `eid_callback`/`sid_callback`/`decode_msg` receive block), `cancom_process_thread` (NORMALPRIO, 2 KB stack — `cancom_process_thread_wa` and its `chThdCreateStatic` call in `comm/comm_can.c`):
 
 ```c
 // extended (29-bit) — what VESC control frames use
@@ -34,16 +34,16 @@ if (!sid_cb_used) lispif_process_can(...);       // decode_msg is NOT called at 
 
 Consequences that decide designs:
 
-- **Returning `true` from a callback is total.** That frame then reaches neither BMS, nor `decode_msg`, nor Lisp. Doc comment: `comm/comm_can.c:395-418`.
-- **In `CAN_MODE_VESC`, 11-bit frames are never executed by the firmware** — no `decode_msg` in that branch. VESC's own control frames are 29-bit EID (`comm/comm_can.c:540-554`), so intercepting `SET_RPM` means the **EID** callback. A SID callback answers a different question.
+- **Returning `true` from a callback is total.** That frame then reaches neither BMS, nor `decode_msg`, nor Lisp. Doc comment: the `comm_can_set_sid_cb`/`comm_can_set_eid_cb` block in `comm/comm_can.c`.
+- **In `CAN_MODE_VESC`, 11-bit frames are never executed by the firmware** — no `decode_msg` in that branch. VESC's own control frames are 29-bit EID (see the `CAN_ID_...` transmit block in `comm_can_transmit_sid/eid`), so intercepting `SET_RPM` means the **EID** callback. A SID callback answers a different question.
 - **The callback fires before BMS**, so a BMS-consumed frame also never reaches Lisp. Return `false` for anything you did not handle.
-- Both CAN interfaces land in one queue: `comm_can_get_rx_frame(0)` drains CAN1 and CAN2 indistinguishably (`comm/comm_can.c:1183-1211`), so a callback cannot tell which wire a frame arrived on.
+- Both CAN interfaces land in one queue: `comm_can_get_rx_frame(0)` drains CAN1 and CAN2 indistinguishably (in `comm/comm_can.c`), so a callback cannot tell which wire a frame arrived on.
 
-`CAN_MODE` gates the whole path (`comm/comm_can.c:1346-1349`). In `UAVCAN` this thread bails before touching the queue and libcanard drains it instead (`libcanard/canard_driver.c:1361,1382`). In `COMM_BRIDGE`/`UNUSED` the callbacks and Lisp still run, `COMM_BRIDGE` forwards each frame to the commands interface *before* them, and `decode_msg` never runs — nothing to intercept. Interception is only meaningful in `CAN_MODE_VESC`.
+`CAN_MODE` gates the whole path (`cancom_process_thread`'s mode check in `comm/comm_can.c`). In `UAVCAN` this thread bails before touching the queue and libcanard drains it instead (`canard_driver.c`, its `bxCAN` receive path). In `COMM_BRIDGE`/`UNUSED` the callbacks and Lisp still run, `COMM_BRIDGE` forwards each frame to the commands interface *before* them, and `decode_msg` never runs — nothing to intercept. Interception is only meaningful in `CAN_MODE_VESC`.
 
 ## Wire format
 
-EID = `(packet_id << 8) | vesc_id`; payload is big-endian `int32` scaled by the table below (`util/buffer.c:33-38,217-218`; reference: `documentation/comm_can.md:34-50`).
+EID = `(packet_id << 8) | vesc_id`; payload is big-endian `int32` scaled by the table below (`buffer_append_int32`/`buffer_get_int32` in `util/buffer.c`; reference: `documentation/comm_can.md`).
 
 | Command | id | Scale | Payload |
 |---|---|---|---|
@@ -53,20 +53,20 @@ EID = `(packet_id << 8) | vesc_id`; payload is big-endian `int32` scaled by the 
 | `CAN_PACKET_SET_POS` | 4 | 1e6 | degrees |
 | `CAN_PACKET_SET_CURRENT_REL` | 10 | 1e5 | fraction |
 
-`SET_CURRENT` is the one oddity: with `len >= 6` the *first* 2 bytes are an off-delay and the current follows (`comm/comm_can.c:1593-1602`), while the sender writes current first (`comm/comm_can.c:523-530`). Read current from a 4-byte frame, or read it last from a 6-byte one.
+`SET_CURRENT` is the one oddity: with `len >= 6` the *first* 2 bytes are an off-delay and the current follows (`CAN_PACKET_SET_CURRENT` case in `decode_msg`), while the sender writes current first (the same packet in `comm_can_transmit_sid/eid`). Read current from a 4-byte frame, or read it last from a 6-byte one.
 
-Addressing rule copied from `decode_msg` (`comm/comm_can.c:1585`): `id == 255 || id == controller_id` (plus `controller_id + 1` on dual-motor hardware, `util/utils_sys.c:64`). Match the same set, so other ESCs' setpoints pass through untouched.
+Addressing rule copied from `decode_msg` (in `comm/comm_can.c`): `id == 255 || id == controller_id` (plus `controller_id + 1` on dual-motor hardware, `utils_second_motor_id` in `util/utils_sys.c`). Match the same set, so other ESCs' setpoints pass through untouched.
 
 Getting your own id:
 
 ```clj
-(can-local-id)              ; lispBM/lispif_vesc_extensions.c:1641-1644
-(conf-get 'controller-id)   ; same field, lispBM/lispif_vesc_extensions.c:4252-4253
+(can-local-id)              ; ext_can_local_id in lispBM/lispif_vesc_extensions.c
+(conf-get 'controller-id)   ; same field, ext_conf_get
 ```
 
-Both read `appconf->controller_id`, which is never -1 at runtime: the default falls back to a UUID-derived id (`hwconf/hw.h:559-560` → `hwconf/hw.c:30-42`), and `App Settings → General → VESC ID` overwrites it.
+Both read `appconf->controller_id`, which is never -1 at runtime: the default falls back to a UUID-derived id (`hw_id_from_uuid` in `hwconf/hw.c`), and `App Settings → General → VESC ID` overwrites it.
 
-`(conf-get 'controller-id 1)` returns the *hardware default*, not the configured value (`ext_conf_get` branches on the second arg, `lispBM/lispif_vesc_extensions.c:3981-4012`).
+`(conf-get 'controller-id 1)` returns the *hardware default*, not the configured value (`ext_conf_get` branches on the second arg).
 
 ## Observe from Lisp
 
@@ -91,17 +91,17 @@ or the event style (`lispBM/README.md:5330-5400`):
 (event-enable 'event-can-eid)
 ```
 
-Traps, all verified in `lispBM/lispif_vesc_extensions.c:2772-2828,6236-6280`:
+Traps, all verified in `lispBM/lispif_vesc_extensions.c` (the `can-recv-*` extensions and the `lbm_event` CAN handlers; see the `ext_can_recv_*` and `event-can-*` handlers):
 
 - **One receiver per direction.** `can_recv_sid_cid` / `can_recv_eid_cid` are single globals: a second thread calling `can-recv-eid` overwrites the first, which then blocks forever. Frames also go either to the blocked thread *or* to the event handler — never both.
-- **A frame can vanish in the gap after a timeout.** The timeout wakes the thread without clearing `can_recv_*_cid`, so a frame arriving before the thread re-enters `can-recv-*` is delivered to a cid that is no longer blocked: the evaluator finds no blocked context, frees the payload and resets the cid to `-1` (`lispBM/lispBM/src/eval_cps.c:5851-5867`, `lispBM/lispif_vesc_extensions.c:6265-6274`). A tight re-blocking loop loses nothing; a loop that does work between timeouts silently drops frames.
-- **Events drop silently when the handler's mailbox is full** (`lbm_event` returns `false`, `lispBM/lispBM/src/eval_cps.c:454-461`). `event-can-eid` is a firehose on a busy bus: every status frame from every device arrives. Filter on `(shr id 8)` immediately.
-- **The handler runs on the evaluator, at the bottom of the stack.** `lbm_event` queues the frame into the handler thread's mailbox from the CAN process thread; the handler itself is a Lisp thread, so it executes on the eval thread (NORMALPRIO-1, `lispBM/lispif.c:764`) below the CAN reader (NORMALPRIO+1, `comm/comm_can.c:189`) and the motor ISR. Jitter is unbounded by design; a control loop does not belong here.
+- **A frame can vanish in the gap after a timeout.** The timeout wakes the thread without clearing `can_recv_*_cid`, so a frame arriving before the thread re-enters `can-recv-*` is delivered to a cid that is no longer blocked: the evaluator finds no blocked context, frees the payload and resets the cid to `-1` (`handle_event_unblock_ctx` in `lispBM/lispBM/src/eval_cps.c`, the `ext_can_recv_*` timeout path in `lispBM/lispif_vesc_extensions.c`). A tight re-blocking loop loses nothing; a loop that does work between timeouts silently drops frames.
+- **Events drop silently when the handler's mailbox is full** (`lbm_event` returns `false`, `lispBM/lispBM/src/eval_cps.c:459-476`, `event_internal`). `event-can-eid` is a firehose on a busy bus: every status frame from every device arrives. Filter on `(shr id 8)` immediately.
+- **The handler runs on the evaluator, at the bottom of the stack.** `lbm_event` queues the frame into the handler thread's mailbox from the CAN process thread; the handler itself is a Lisp thread, so it executes on the eval thread (NORMALPRIO-1, `eval_thread_wa`'s `chThdCreateStatic` call in `lispBM/lispif.c`) below the CAN reader (NORMALPRIO+1, `cancom_process_thread_wa`) and the motor ISR. Jitter is unbounded by design; a control loop does not belong here.
 - **The frame you receive is already history.** `decode_msg` ran first, so `SET_RPM` has already put the speed PID in charge. Calling `set-current` from the handler wins for a few control iterations and then loses again when the next `SET_RPM` arrives. This is the "don't" case, not an alternative to interception.
 
 ## Intercept from a native library
 
-The consume hooks are C function pointers with no Lisp binding (`comm/comm_can.c:129-130`), exported to native libs as `can_set_sid_cb` / `can_set_eid_cb` (`lispBM/c_libs/vesc_c_if.h:400-401`, wired at `lispBM/lispif_c_lib.c:805-806`). Build with `lispBM/c_libs/rules.mk`, see `native-extensions/SKILL.md`, `lispBM/c_libs/examples/*`.
+The consume hooks are C function pointers with no Lisp binding (`sid_callback`/`eid_callback` in `comm/comm_can.c`), exported to native libs as `can_set_sid_cb` / `can_set_eid_cb` (`lispBM/c_libs/vesc_c_if.h:400-401`, wired in `lispBM/lispif_c_lib.c`'s `lib_can_set_*` functions). Build with `lispBM/c_libs/rules.mk`, see `native-extensions/SKILL.md`, `lispBM/c_libs/examples/*`.
 
 ```c
 #include "vesc_c_if.h"
@@ -169,44 +169,44 @@ INIT_FUN(lib_info *info) {
 
 Binding rules that bite:
 
-- **`info->stop_fun` is mandatory here.** The loader keys "loaded" on it (`lispBM/lispif_c_lib.c:1066-1086`) and only calls it on unload/restart (`lispBM/lispif_c_lib.c:1096-1138`). Without it, `unload-native-lib` reports "Library not loaded" and the callback keeps pointing at unloaded code.
+- **`info->stop_fun` is mandatory here.** The loader keys "loaded" on it (the `find_loaded_lib`/`lib_load` block in `lispBM/lispif_c_lib.c`) and only calls it on unload/restart (`lib_unload`). Without it, `unload-native-lib` reports "Library not loaded" and the callback keeps pointing at unloaded code.
 - **One slot, no chaining.** `can_set_eid_cb` assigns a single pointer; a second registrant (another lib, `applications/finn` code) silently replaces the first. Clear it to `0` on stop.
-- **Extensions must be named `ext-…`**, enforced by `lib_add_extension` (`lispBM/lispif_c_lib.c:683-693`).
-- **The local CAN id is not readable from C.** `get_cfg_int`/`CFG_PARAM` cover a fixed subset with no controller-id member (`lispBM/c_libs/vesc_c_if.h:240-305`, `lispBM/lispif_c_lib.c:478-496`). Pass it from Lisp, as above — do not parse EEPROM for it.
-- **Consumed means consumed.** The frame no longer reaches `lispif_process_can`, so your lib is the only path to Lisp. Publish it through an extension (above), or block a Lisp thread and unblock it from the callback with `lbm_unblock_ctx` + the `f_*` flatten helpers (`lispBM/c_libs/vesc_c_if.h:325-327,628-639`), which is the pattern `can-recv-eid` itself uses.
-- **Dual-motor boards bypass both callbacks for local sends.** `comm_can_transmit_eid_replace` calls `decode_msg` directly when the target id is this board's (`comm/comm_can.c:293-301`), so a native `canset-rpm` to the sibling motor is never intercepted.
+- **Extensions must be named `ext-…`**, enforced by `lib_add_extension` (in `lispBM/lispif_c_lib.c`).
+- **The local CAN id is not readable from C.** `get_cfg_int`/`CFG_PARAM` cover a fixed subset with no controller-id member (`vesc_c_if.h`, the `CFG_PARAM` macro table; `lib_get_cfg` in `lispif_c_lib.c`). Pass it from Lisp, as above — do not parse EEPROM for it.
+- **Consumed means consumed.** The frame no longer reaches `lispif_process_can`, so your lib is the only path to Lisp. Publish it through an extension (above), or block a Lisp thread and unblock it from the callback with `lbm_unblock_ctx` + the `f_*` flatten helpers (`vesc_c_if.h`, the `f_i/f_f/f_u32/...` block), which is the pattern `can-recv-eid` itself uses.
+- **Dual-motor boards bypass both callbacks for local sends.** `comm_can_transmit_eid_replace` calls `decode_msg` directly when the target id is this board's (in `comm/comm_can.c`), so a native `canset-rpm` to the sibling motor is never intercepted.
 
 ### Where the control loop goes
 
 Two viable homes, neither in the CAN callback:
 
-- **A lib thread** (`VESC_IF->spawn`, NORMALPRIO, `lispBM/c_libs/vesc_c_if.h:382`) reading the volatile setpoint. Add `VESC_IF->thread_set_priority` if it must outrank other app threads; keep it below `NORMALPRIO + 1` so the CAN reader still runs.
-- **`mc_set_pwm_callback`** (`lispBM/c_libs/vesc_c_if.h:433` → `motor/mc_interface.c:446`, called from the FOC ADC ISR at `motor/mcpwm_foc.c:3819-3822` → `motor/mc_interface.c:1938-1940`): the honest place for a per-cycle controller. It runs at the control-loop rate, not the raw ISR rate: 25 kHz with `foc_control_sample_mode` V0_V7, 12.5 kHz in the default V0 mode (`motor/mcconf_default.h:262-263,382-383`, `motor/mc_interface.c:1028-1041`). ISR context: no blocking, no allocation, and it is another single shared slot.
+- **A lib thread** (`VESC_IF->spawn`, NORMALPRIO — the `spawn` member of `vesc_c_if` in `lispBM/c_libs/vesc_c_if.h`) reading the volatile setpoint. Add `VESC_IF->thread_set_priority` if it must outrank other app threads; keep it below `NORMALPRIO + 1` so the CAN reader still runs.
+- **`mc_set_pwm_callback`** (the `vesc_c_if` member → `mc_interface_set_pwm_callback` in `motor/mc_interface.c`, called from the FOC ADC ISR at `motor/mcpwm_foc.c:3819-3822` → `motor/mc_interface.c:1938-1940`): the honest place for a per-cycle controller. It runs at the control-loop rate, not the raw ISR rate: 25 kHz with `foc_control_sample_mode` V0_V7, 12.5 kHz in the default V0 mode (`motor/mcconf_default.h:262-263,382-383`, `motor/mc_interface.c:1028-1041`). ISR context: no blocking, no allocation, and it is another single shared slot.
 
 ## Timeouts and safety
 
-`timeout_reset()` is called by `decode_msg` for every control packet (`comm/comm_can.c:1587-1620`) and by the Lisp setters (`lispBM/lispif_vesc_extensions.c:1790-1804`). A consumed frame resets nothing, so the app timeout — `APPCONF_TIMEOUT_MSEC` 1000 by default (`applications/appconf_default.h:27-28`) — will brake the motor mid-run unless your callback calls `VESC_IF->timeout_reset()` (`lispBM/c_libs/vesc_c_if.h:538`) or your Lisp loop calls `(timeout-reset)`.
+`timeout_reset()` is called by `decode_msg` for every control packet (in `comm/comm_can.c`) and by the Lisp setters (the `ext_set_*` block in `lispBM/lispif_vesc_extensions.c`). A consumed frame resets nothing, so the app timeout — `APPCONF_TIMEOUT_MSEC` 1000 by default (`applications/appconf_default.h`) — will brake the motor mid-run unless your callback calls `VESC_IF->timeout_reset()` (the `timeout_reset` member of `vesc_c_if`) or your Lisp loop calls `(timeout-reset)`.
 
-Losing the host therefore looks the same as before interception: after the timeout the firmware brakes/releases (`timeout.c:225-238`). Do not disable the timeout to "fix" a missing `timeout_reset`; fix the reset.
+Losing the host therefore looks the same as before interception: after the timeout the firmware brakes/releases (`timeout.c`, the timeout thread's brake branch). Do not disable the timeout to "fix" a missing `timeout_reset`; fix the reset.
 
 ## Verify it actually intercepted
 
 ```clj
 (can-local-id)          ; the id your callback must match
-(get-rpm-set)           ; mcpwm_foc_get_pid_speed_set (lispBM/lispif_vesc_extensions.c:2113)
+(get-rpm-set)           ; mcpwm_foc_get_pid_speed_set (ext_get_rpm_set in lispBM/lispif_vesc_extensions.c)
 (get-pos)               ; mc_interface_get_pid_pos_now
 ```
 
-Send a `SET_RPM` to this VESC from the bench host. If interception works, the motor does not follow it and `get-rpm-set` stays where it was; the terminal's `events` command shows no `set_pid_speed` entry (`mc_interface_set_pid_speed` logs it, `motor/mc_interface.c:596-620`). If the motor follows the frame, the callback either is not registered or returned `false`.
+Send a `SET_RPM` to this VESC from the bench host. If interception works, the motor does not follow it and `get-rpm-set` stays where it was; the terminal's `events` command shows no `set_pid_speed` entry (`mc_interface_set_pid_speed` logs it, in `motor/mc_interface.c`). If the motor follows the frame, the callback either is not registered or returned `false`.
 
-Frame visibility, without guessing: `COMM_CAN_FWD_FRAME` re-transmits a frame you pass it onto the bus (`comm/commands.c:1188-1198`) — useful to mirror frames to a sniffer, not to observe what this VESC received. `can-msg-age` / `canget-*` read the cached status frames the *other* devices sent (`lispBM/lispif_vesc_extensions.c:2382-2410`).
+Frame visibility, without guessing: `COMM_CAN_FWD_FRAME` re-transmits a frame you pass it onto the bus (its case in `comm/commands.c`) — useful to mirror frames to a sniffer, not to observe what this VESC received. `can-msg-age` / `canget-*` read the cached status frames the *other* devices sent (the `ext_can_msg_age`/`ext_can_get_*` handlers).
 
 ## Off-target
 
-The bundled x86 REPL stubs every CAN entry point with `lbm_enc_sym(SYM_EERROR)` (`lispBM/lispBM/repl/bldc_extension_stubs.c:996-1012` for the CAN pair, `:1188-1191` for `conf-get`). A script that calls `can-recv-eid` there returns an error immediately, so test the control logic against injected frames (`ref/testing.md`) and leave the CAN plumbing for the bench.
+The bundled x86 REPL stubs every CAN entry point with `lbm_enc_sym(SYM_EERROR)` (`lispBM/lispBM/repl/bldc_extension_stubs.c`, the `can-recv-sid`/`can-recv-eid`/`conf-get` stubs). A script that calls `can-recv-eid` there returns an error immediately, so test the control logic against injected frames (`ref/testing.md`) and leave the CAN plumbing for the bench.
 
 ## What does not exist
 
 - No Lisp binding for the consume hooks, and no `can-consume` / `can-set-cb`.
-- No `can-send` — the senders are `can-send-sid` / `can-send-eid` (`lispBM/lispif_vesc_extensions.c:6107-6110`).
-- No hardware acceptance filter to select by packet id: this firmware never calls `canSTM32SetFilters`, so ChibiOS programs its accept-everything default (`ChibiOS_3.0.5/os/hal/ports/STM32/LLD/can_lld.c:112-129`). Every decision is made in software, per frame — including for frames the firmware then drops.
+- No `can-send` — the senders are `can-send-sid` / `can-send-eid` (`ext_can_send_*` in `lispBM/lispif_vesc_extensions.c`).
+- No hardware acceptance filter to select by packet id: this firmware never calls `canSTM32SetFilters`, so ChibiOS programs its accept-everything default (`can_lld.c`, the `CAN_LLD_FILTER`/accept-all init in `ChibiOS_3.0.5`). Every decision is made in software, per frame — including for frames the firmware then drops.

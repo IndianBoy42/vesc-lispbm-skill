@@ -204,12 +204,12 @@ DESC = {
     'lbm_is_symbol_nil': 'Check if symbol ID is nil.',
     'lbm_is_symbol_true': 'Check if symbol ID is true.',
     # OS
-    'sleep_ms': 'Sleep current thread for ms milliseconds.',
-    'sleep_us': 'Sleep current thread for us microseconds.',
+    'sleep_ms': 'Sleep current thread for ms milliseconds (100 us resolution, integer ms exact).',
+    'sleep_us': 'Sleep current thread; **rounds up to 100 us systicks** (`US2ST`), so `sleep_us(1)` sleeps 100 us. Never use it for sub-tick timing.',
     'system_time': 'Time since boot in seconds (float).',
     'ts_to_age_s': 'Convert system timestamp to age in seconds (handles overflow).',
     'printf': 'Print to lisp console in VESC-Tool. Printf-style formatting.',
-    'malloc': 'Allocate from LBM pool (dips into reserve after GC). Returns NULL on failure.',
+    'malloc': 'General allocator on `LBM_MEMORY` (the same 28 KiB pool as byte arrays, 64 B blocks, mutex-protected, rounds a request into the GC reserve via `lbm_malloc_reserve`). Safe from any thread; use it for extension state that must live outside the image.',
     'free': 'Free memory allocated by malloc.',
     'spawn': 'Create thread. Function must be static. Returns opaque handle. Max 20 threads.',
     'request_terminate': 'Request thread stop. Waits 2s then crashes via WDT if thread won\'t die.',
@@ -383,7 +383,7 @@ DESC = {
     'mutex_lock': 'Lock mutex. Blocks. Has priority inheritance.',
     'mutex_unlock': 'Unlock mutex.',
     # Timer
-    'timer_time_now': 'High-res timer value (TIM5, 14 MHz). For busy-wait timing.',
+    'timer_time_now': 'TIM5 count at **14 MHz**: a delta is `1/14 us`, so divide by 14 for microseconds (wraps every 306.8 s). For busy-wait timing.',
     'timer_seconds_elapsed_since': 'Seconds elapsed since a timer_time_now() capture.',
     'timer_sleep': 'Busy-wait sleep (seconds). High precision, blocks thread.',
     # System
@@ -391,6 +391,9 @@ DESC = {
     'sys_unlock': 'System unlock. Re-enables interrupts on outermost call.',
     'thread_set_priority': 'Thread priority: -5 (lowest) to 5 (highest), 0=normal. FW 6.06+.',
     'shutdown_disable': 'Disable auto-shutdown (momentary button HW). FW 6.06+.',
+    'system_time_ticks': 'Current ChibiOS systick count: **1 tick = 100 us** (10 kHz). Wraps every 119.3 h; compare deltas with `ts_to_age_s`.',
+    'sleep_ticks': 'Sleep current thread for that many systicks (100 us each).',
+    'foc_set_fw_override': 'Override the field-weakening current (Amps). FW 7.00+. C-only: no `foc-set-fw-override` lisp extension is registered upstream.',
     # FOC
     'foc_get_id': 'FOC d-axis current (filtered, Amps).',
     'foc_get_iq': 'FOC q-axis current (filtered, Amps).',

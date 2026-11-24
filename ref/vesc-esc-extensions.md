@@ -31,22 +31,27 @@ Details and argument order are in `../README.md`; this is the map.
 
 | Group | Functions |
 |---|---|
-| Motor state | `get-rpm` `get-rpm-fast` `get-rpm-set` `get-duty` `get-current` `get-current-in` `get-current-dir` `get-id` `get-iq` `get-vd` `get-vq` `get-pos` `get-batt` `get-vin` `get-ah` `get-wh` `get-ah-chg` `get-wh-chg` `get-fault` `get-dist` `get-encoder` |
-| Thermal | `get-temp-fet` (arg picks sensor 1..3, 0/omitted = hottest) `get-temp-mot` `override-temp-motor` |
-| Control | `set-current` `set-current-rel` `set-duty` `set-brake` `set-brake-rel` `set-handbrake` `set-handbrake-rel` `set-rpm` `set-pos` `foc-openloop` `set-kill-sw` `select-motor` `app-disable-output` |
+| Motor state | `get-rpm` `get-rpm-fast` `get-rpm-set` `get-duty` `get-duty-abs` (7.00) `get-current` `get-current-in` `get-current-dir` `get-id` `get-iq` `get-id-target` (7.00) `get-iq-target` (7.00) `get-vd` `get-vq` `get-pos` `get-batt` `get-vin` `get-ah` `get-wh` `get-ah-chg` `get-wh-chg` `get-fault` `get-dist` `get-encoder` |
+| Thermal | `get-temp-fet` (arg picks sensor 1..3, 0/omitted = hottest) `get-temp-mot` `get-temp-mot-res` (7.00) `override-temp-motor` |
+| Encoder (7.00) | `encoder-index-found` `encoder-abi-state` `enc-sample` |
 | Timing | `systime` (**100 us ticks**, 10 kHz on ESC) `secs-since` (seconds, wrap-safe) `sleep` (seconds; 100 us granularity + 200 us poll) — units table: `performance-and-memory.md` section 0. Plus the lispBM
 loops `loopfor` `loopwhile` `looprange` `loopforeach` and `loopwhile-thd` |
-| Config | `conf-get` `conf-set` `conf-store` `conf-get-limits` `conf-restore-mc` `conf-restore-app` `eeprom-store-f` `eeprom-read-f` `eeprom-store-i` `eeprom-read-i` |
+| Config | `conf-get` `conf-set` `conf-store` `conf-get-limits` `conf-restore-mc` `conf-restore-app` `eeprom-store-f` `eeprom-read-f` `eeprom-store-i` `eeprom-read-i` `conf-remap-as504x` `conf-remap-hall` (both 7.00) |
 | CAN | `can-send-sid` `can-send-eid` `can-recv-sid` `can-recv-eid` `can-msg-age` `can-list-devs` `canset-*` `canget-*` `canset-current` ... `canget-temp-motor` |
-| IO | `gpio-configure` `gpio-write` `gpio-read` `pwm-start` `pwm-stop` `pwm-set-duty` `icu-start` `icu-width` `icu-period` `uart-start` `uart-write` `uart-read` `i2c-start` `i2c-tx-rx` `i2c-restore` `get-adc` `get-adc-decoded` `ioboard-*` |
+| IO / board | `gpio-configure` `gpio-write` `gpio-read` `pwm-start` `pwm-stop` `pwm-set-duty` `icu-start` `icu-width` `icu-period` `uart-start` `uart-write` `uart-read` `i2c-start` `i2c-tx-rx` `i2c-restore` `get-adc` `get-adc-decoded` `ioboard-*` `override-led` `shutdown` `shutdown-btn-read` (last three 7.00) |
 | IMU | `get-imu-rpy` `get-imu-quat` `get-imu-acc` `get-imu-gyro` `get-imu-mag` `get-imu-acc-derot` `get-imu-gyro-derot` — the ESC reads the IMU the firmware was configured with; it does **not** expose `imu-start-lsm6` / `imu-stop` (those are Express-only) |
-| Instrumentation | `print` `puts` `stats` `sysinfo` `send-data` `recv-data` `plot-init` `plot-add-graph` `plot-set-graph` `plot-send-points` `log-config-field` `log-start` `log-send-f32` `log-send-f64` |
+| Instrumentation | `print` `puts` `stats` `sysinfo` `send-data` `recv-data` `plot-init` `plot-add-graph` `plot-set-graph` `plot-send-points` `log-config-field` `log-start` `log-send-f32` `log-send-f64` `prof-trig` `prof-result` (both 7.00) |
 | Script/firmware | `lbm-write` `lbm-run` `lbm-erase` `image-save` `import` `load-native-lib` `unload-native-lib` `lbm-set-gc-stack-size` `free` |
 | Math | `sin` `cos` `atan2` `sqrt` `pow` `log` (base e) `log10` `floor` `ceil` `round` `abs` `deg2rad` `rad2deg` `rand` |
 | Strings/buffers | `str-from-n` `str-merge` `str-join` `str-to-i` `str-to-f` `str-split` `bufcreate` `buflen` `bufclear` `bufget-i8/u8/i16/u16/i32/u32/f32` `bufset-*` `bufcpy` |
 
 `get-temp-mot` (local) vs `canget-temp-motor` (over CAN) is not a typo on either side; the
 names really are inconsistent, and the same asymmetry exists for `canget-temp-fet`.
+
+`conf-set` on **app** settings is clamped in 7.00: `ext_conf_set` now runs
+`commands_apply_appconf_hw_limits` (as it already did for motor conf) before
+`app_set_configuration`, so a value the hardware cannot take is silently adjusted
+rather than applied raw. 6.06 applied the clamp to motor conf only.
 
 Some names are not C extensions at all but short functions defined in a Lisp prelude that
 the runtime loads on demand (`../lispBM/src/extensions/lbm_dyn_lib.c`): `abs`, `filter`,
@@ -59,14 +64,16 @@ behave like the rest; that file is where to look when one of them surprises you.
 Most entries in `../README.md` carry a platform table. `ESC` means the motor controller
 (this firmware), `Express` means the esp32 companion. Calling an Express-only name from an
 ESC script is an `undefined symbol` or an eval error, and many names are per-firmware
-version gated (6.00 / 6.05 / 6.06). Check the table for the firmware actually on the bench.
+version gated (6.00 / 6.05 / 6.06 / 7.00 — the 7.00 additions are marked above; `vesc_c_if.h` gained
+`foc_set_fw_override` but no lisp extension registers it). Check the table for the firmware actually on the bench.
 
 ## What a script costs
 
 From `../lispif.c`:
 
-- cons cells (lisp values, closures, lists, boxed floats): `HEAP_SIZE` = 2761 cells
-  (~22 KB) on the standard build.
+- cons cells (lisp values, closures, lists, boxed floats): `HEAP_SIZE` = 2750 cells
+  (~22 KB) on the stock 7.00 build (2761 in 6.06 — it trades 8 B of heap per
+  `EXTENSION_STORAGE_SIZE` slot).
 - arrays and byte buffers (`bufcreate`, `mkarray`): a separate 28 KB pool
   (`LBM_MEMORY_SIZE_28K`).
 - A script's ring buffers, tables and images come out of those two pools, so a script

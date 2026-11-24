@@ -372,7 +372,7 @@ struct {
 | `system_time` | `float system_time()` | Time since boot in seconds (float). |
 | `ts_to_age_s` | `float ts_to_age_s(systime_t ts)` | Convert system timestamp to age in seconds (handles overflow). |
 | `printf` | `int printf(const char *str, ...)` | Print to lisp console in VESC-Tool. Printf-style formatting. |
-| `malloc` | `void* malloc(size_t bytes)` | Allocate from LBM pool (dips into reserve after GC). Returns NULL on failure. |
+| `malloc` | `void* malloc(size_t bytes)` | General allocator on `LBM_MEMORY` (the same 28 KiB pool as byte arrays, 64 B blocks, mutex-protected, rounds a request into the GC reserve via `lbm_malloc_reserve`). Safe from any thread; use it for extension state that must live outside the image. |
 | `free` | `void free(void *prt)` | Free memory allocated by malloc. |
 | `request_terminate` | `void request_terminate(lib_thread thd)` | Request thread stop. Waits 2s then crashes via WDT if thread won't die. |
 | `should_terminate` | `bool should_terminate()` | Check if current thread should stop. Use in thread loop. |
@@ -638,7 +638,6 @@ struct {
 | `lbm_unblock_ctx_unboxed` | `bool lbm_unblock_ctx_unboxed(lbm_cid cid, lbm_value unboxed)` | Unblock a context with a raw lbm_value (no flattening). FW 6.05+. |
 | `system_time_ticks` | `systime_t system_time_ticks()` | Current ChibiOS systick count: **1 tick = 100 us** (10 kHz). Wraps every 119.3 h; compare deltas with `ts_to_age_s`. |
 | `sleep_ticks` | `void sleep_ticks(systime_t ticks)` | Sleep current thread for that many systicks (100 us each). |
-| `malloc` / `free` (Os) | `void* malloc(size_t)` / `void free(void*)` | General allocator on `LBM_MEMORY` (the same 28 KiB pool as byte arrays, 64 B blocks, mutex-protected, rounds a request into the GC reserve via `lbm_malloc_reserve`). Safe from any thread; use it for extension state that must live outside the image. |
 
 ## FOC Audio
 
@@ -662,6 +661,7 @@ struct {
 | `sem_reset` | `void sem_reset(lib_semaphore)` | Reset count to 0, wake all waiters. |
 | `thread_set_priority` | `void thread_set_priority(int priority)` | Thread priority: -5 (lowest) to 5 (highest), 0=normal. FW 6.06+. |
 | `shutdown_disable` | `void shutdown_disable(bool disable)` | Disable auto-shutdown (momentary button HW). FW 6.06+. |
+| `foc_set_fw_override` | `void foc_set_fw_override(float current)` | Override the field-weakening current (Amps). FW 7.00+. C-only: no `foc-set-fw-override` lisp extension is registered upstream. |
 
 ## Macros
 
