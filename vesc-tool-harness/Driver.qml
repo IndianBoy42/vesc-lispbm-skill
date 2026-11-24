@@ -373,11 +373,23 @@ Item {
         } else if (s === ":ping") {
             emit({ k: "pong", connected: VescIf.isPortConnected() })
         } else if (s === ":fw") {
-            // Firmware-reported capability state, end to end: the flag bytes
-            // come from COMM_FW_VERSION, so hasQmlApp false after a package
-            // install means the device's QML slot failed its length+CRC
-            // check (or the upload never reached the QML sector) and VESC
-            // Tool will silently skip the app UI fetch - the missing tab.
+            // Firmware-reported capability state, end to end: the flag
+            // bytes come from COMM_FW_VERSION, so hasQmlApp false after a
+            // package install means the device's QML slot failed its
+            // length+CRC check (vesc_tool then silently skips the app UI
+            // fetch); qmlHead identifies WHICH UI is in the slot.
+            //
+            // Forces a fresh handshake first: rx params are cached from
+            // this process's connect, so a window whose physical link
+            // changed since connect would replay stale flags (a real
+            // failure: probes kept reporting a previously attached
+            // Express while the link was on the tail VESC). reloadFirmware()
+            // re-requests fw version, custom configs and the app UI over
+            // the current link; the record emits once they have arrived,
+            // driven by fwTimer below.
+            // Cached first, clearly marked, then a fresh record after the
+            // re-handshake (fwTimer below). The stale one arrives instantly
+            // for diagnostics that don't need freshness.
             var rx = VescIf.getLastFwRxParams()
             emit({ k: "fw", connected: VescIf.isPortConnected(),
                    hw: rx.hw, fw: rx.fw, fwName: rx.fwName ? rx.fwName : "",
@@ -385,7 +397,10 @@ Item {
                    hasQmlHw: rx.hasQmlHw, hasQmlApp: rx.hasQmlApp,
                    qmlAppFullscreen: rx.qmlAppFullscreen,
                    qmlFetched: VescIf.qmlAppLoaded(),
-                   qmlHead: VescIf.qmlAppLoaded() ? VescIf.qmlApp().substring(0, 160) : "" })
+                   qmlHead: VescIf.qmlAppLoaded() ? VescIf.qmlApp().substring(0, 160) : "",
+                   stale: true })
+            VescIf.reloadFirmware()
+            fwTimer.restart()
         } else if (s === ":quit") {
             log("STATE", "quit requested")
             cleanShutdown()
@@ -487,6 +502,26 @@ Item {
         repeat: false
         onTriggered: pumpRepl()
     }
+    // :fw's fresh record: reloadFirmware() re-requests fw version, custom
+    // configs and the app UI over the current link; three seconds covers the
+    // version exchange plus a chunked app-UI fetch on a healthy link.
+    Timer {
+        id: fwTimer
+        interval: 3000
+        repeat: false
+        onTriggered: {
+            var rx = VescIf.getLastFwRxParams()
+            emit({ k: "fw", connected: VescIf.isPortConnected(),
+                   hw: rx.hw, fw: rx.fw, fwName: rx.fwName ? rx.fwName : "",
+                   customConfigNum: rx.customConfigNum,
+                   hasQmlHw: rx.hasQmlHw, hasQmlApp: rx.hasQmlApp,
+                   qmlAppFullscreen: rx.qmlAppFullscreen,
+                   qmlFetched: VescIf.qmlAppLoaded(),
+                   qmlHead: VescIf.qmlAppLoaded() ? VescIf.qmlApp().substring(0, 160) : "",
+                   stale: false })
+        }
+    }
+
 
     Timer {
         id: replQuietTimer
