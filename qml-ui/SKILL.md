@@ -207,7 +207,7 @@ slow and can time out over BLE.
 | `pkgName` | name shown in the store and the package page |
 | `pkgDescriptionMd` | path to a markdown file; converted to HTML for the listing |
 | `pkgLisp` | optional LispBM file, packed with its imports |
-| `pkgQml` | the GUI file, the subject of this guide |
+| `pkgQml` | the GUI file, the subject of this guide; omit it and the package ships no GUI (and its install erases the device's slot) |
 | `pkgQmlIsFullscreen` | store as flags `2` instead of `1` |
 | `pkgOutput` | output `.vescpkg` path |
 | `isCompatible(fwRxParams)` | return false to hide the package for that device |
@@ -248,6 +248,17 @@ Tool options that pair with it: `--qmlAutoConn`, `--qmlFullscreen`,
 Removal erases the sector: **Packages** → **Uninstall** calls `qmlErase(16)`
 (`vesc_tool/pages/pagevescpackage.cpp:394`, `vesc_tool/mobile/Packages.qml:194`).
 Reconnecting after that shows no custom tab.
+
+**An install rewrites both slots, not only the ones the package fills.**
+`CodeLoader::installVescPackage` (`codeloader.cpp:997-1030`) uploads `qmlFile`
+when present and otherwise calls `qmlErase(16)` if the device reports
+`hasQmlApp`; the same function then erases the lisp slot and uploads
+`lispData` only when present. So a GUI-only package silently removes the
+controller script, and a script-only package silently removes the GUI. Ship
+both when the device needs both. The builder gives no warning when `pkgQml`
+is missing: a descriptor without it still builds, and the log's
+`Package qml found!` line is the only build-time signal that a GUI was
+packed.
 
 ## Traps
 
