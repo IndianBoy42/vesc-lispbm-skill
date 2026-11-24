@@ -238,6 +238,63 @@ Rules and limits:
 - `move-to-flash` does the same for one value after the fact, and `dm-create` regions stay
   in the pool by design (they exist to be compactable).
 
+### Default: pace every timed loop on absolute deadlines
+
+**A periodic loop that sleeps a fixed amount drifts.** Measured: `(sleep 0.02)` per
+iteration ran a nominal 50 Hz tick at ~43 Hz, and sleeping only the remainder after the
+work (`(sleep (- period spent))`) did no better (47-48 Hz), because the sleep rounds up to the 100 us RTOS
+tick, the VM re-polls every 200 us and the wake lands late - and that lateness is added
+again on every tick. An **absolute deadline advanced by exactly one period** absorbs all of
+it: a late wake simply shortens the next sleep, so the average rate is the target and only
+the jitter is one quantum (~1 ms worst case).
+
+Copy this, one instance per loop:
+
+```clj
+@const-start
+(defun my-loop () {
+  (loopwhile t {
+    ; ---- work ----
+    ...
+    ; ---- pace: absolute deadline in systime ticks (1 tick = 100 us) ----
+    (setq my-dl (+ my-dl 200))                  ; 200 ticks = 20 ms = 50 Hz
+    (def my-rem (to-i32 (- my-dl (systime))))   ; to-i32: u32 compares are unsigned
+    (def my-behind (to-i32 (- (systime) my-dl)))
+    (if (< my-rem 0) (setq my-rem 0))           ; overran: no sleep this tick
+    (if (> my-behind (* 4 200)) (setq my-dl (systime)))  ; stalled: re-anchor
+    (if (> my-rem 0) (sleep (/ my-rem 10000.0)))
+  })
+})
+@const-end
+(def my-dl (systime))   ; heap state, defined before the loop starts
+(spawn 512 my-loop)     ; stack must fit the body
+```
+
+Rules that are not optional:
+
+- **`to-i32` on both differences.** `systime` is u32 and lispBM compares u32 values
+  *unsigned*: `(< rem 0)` never fires, so a deadline one tick in the past produces
+  `rem = 4294967295` and `sleep(429496 s)` - the loop is not dead, it is asleep for five
+  days. `to-i32` reinterprets the u32, so negative means "deadline still ahead".
+- **One deadline variable per loop, with a script-specific prefix.** A `def` inside a
+  defun is visible globally on the device, so three loops sharing `dl`/`rem` fight over one
+  deadline (this exact bug produced a loop that "died" while another kept it alive).
+- **Re-anchor when more than ~4 periods behind.** Without it a stalled loop bursts
+  catch-up iterations; with it a long stall resumes cleanly.
+- **Units.** Deadline and period are 100 us ticks; `(/ ticks 10000.0)` converts to the
+  seconds `sleep` takes; `sleep` rounds up to 100 us and the VM polls at 200 us.
+- **Sleep blocks the evaluator.** Every timed loop runs on the one interpreter thread, so a
+  long sleep starves every other script and the REPL. Keep sleeps short; the REPL/`ask`
+  traffic itself distorts measurements, so verify with a counter over a clean window.
+- **If the work costs more than the period, the loop is work-bound.** Measure it (a
+  `(- (systime) t0)` spent counter) and pick the period from the measurement - a 14-frame
+  CAN telemetry tick cost 16-19 ms until the packing moved to C. For high-rate work, put
+  the work behind one extension call; a lisp extension dispatch alone is ~60 us.
+
+Verified on a VESC 6 MK6: 20 iterations of this pattern took 4001 ticks for a 4000-tick
+target (0.025%), and a 14-frame 50 Hz CAN tick delivered 50.2 Hz over a 10.9 s window.
+Background and the u32/literal traps: `ref/performance-and-memory.md`.
+
 ### Cost and lifetime of a script
 - Memory: 2753 cons cells (22024 B) plus a separate 28672 B pool for arrays and byte
   buffers (`../lispif.c`). A ring buffer of N floats costs `4*N` bytes of the pool.

@@ -337,7 +337,9 @@ Two traps that combine into a false negative, both hit while pacing a telemetry 
   `0x15100000`, which becomes `0x05100000` - never build a large constant from a
   literal, compute it or use a value that fits.
 
-The fix is a cast: `(to-i32 x)` reinterprets the u32 as i32 (verified on device:
+The copyable loop template that gets this right is in `SKILL.md`
+("Default: pace every timed loop on absolute deadlines"). The fix is a cast:
+`(to-i32 x)` reinterprets the u32 as i32 (verified on device:
 `(-100 300 -5 -1)`), so a negative difference means "deadline in the future" and both
 `(< rem 0)` and a re-anchor on `behind > 4 * period` behave. Pacing a 50 Hz loop this
 way measured 4001 ticks for a 4000-tick target (0.025%); the earlier relative
