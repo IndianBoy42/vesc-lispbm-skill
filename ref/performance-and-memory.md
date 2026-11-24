@@ -323,6 +323,26 @@ telemetry tick went from a 31 Hz loop to 48 Hz once every frame was packed and s
 one extension entry point. The C call still blocks for the wire time of each frame it
 sends.
 
+### u32 arithmetic: comparisons are UNSIGNED, literals truncate at 28 bits
+
+Two traps that combine into a false negative, both hit while pacing a telemetry loop:
+
+- `systime` returns a **u32**, and lispBM compares u32 values **unsigned**. A
+  difference that went negative (`(- deadline now)` with the deadline one tick in the
+  past) reads as ~4.29e9, so `(< rem 0)` **never fires** - the guard silently passes
+  and `(sleep (/ rem 10000.0))` sleeps for five days.
+- Integer **literals above 2^28 truncate**: `4294967098` parses as `-198` (its 28-bit
+  truncation), so a probe like `(< 4294967098 0)` returns `t` and "proves" the guard
+  works while the real wrapped variable still reads huge. The same truncation hits
+  `0x15100000`, which becomes `0x05100000` - never build a large constant from a
+  literal, compute it or use a value that fits.
+
+The fix is a cast: `(to-i32 x)` reinterprets the u32 as i32 (verified on device:
+`(-100 300 -5 -1)`), so a negative difference means "deadline in the future" and both
+`(< rem 0)` and a re-anchor on `behind > 4 * period` behave. Pacing a 50 Hz loop this
+way measured 4001 ticks for a 4000-tick target (0.025%); the earlier relative
+sleep-after-work pacing missed by 3-5% because the wake latency was re-added every tick.
+
 ### The GC cliff
 
 `def`-shaped retention of cons cells while the heap fills (2750 cells on stock 7.00; the table below was measured on a 2753-cell local build, ~22 KiB):
