@@ -372,6 +372,20 @@ Item {
             emit(info)
         } else if (s === ":ping") {
             emit({ k: "pong", connected: VescIf.isPortConnected() })
+        } else if (s === ":fw") {
+            // Firmware-reported capability state, end to end: the flag bytes
+            // come from COMM_FW_VERSION, so hasQmlApp false after a package
+            // install means the device's QML slot failed its length+CRC
+            // check (or the upload never reached the QML sector) and VESC
+            // Tool will silently skip the app UI fetch - the missing tab.
+            var rx = VescIf.getLastFwRxParams()
+            emit({ k: "fw", connected: VescIf.isPortConnected(),
+                   hw: rx.hw, fw: rx.fw, fwName: rx.fwName ? rx.fwName : "",
+                   customConfigNum: rx.customConfigNum,
+                   hasQmlHw: rx.hasQmlHw, hasQmlApp: rx.hasQmlApp,
+                   qmlAppFullscreen: rx.qmlAppFullscreen,
+                   qmlFetched: VescIf.qmlAppLoaded(),
+                   qmlHead: VescIf.qmlAppLoaded() ? VescIf.qmlApp().substring(0, 160) : "" })
         } else if (s === ":quit") {
             log("STATE", "quit requested")
             cleanShutdown()
