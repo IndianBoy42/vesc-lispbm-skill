@@ -333,7 +333,18 @@ Item {
 
         emit({ k: "cmd", line: s })
 
-        if (s.indexOf(":upload ") === 0) {
+        if (s.indexOf(":pkg ") === 0) {
+            // Install a .vescpkg through vesc_tool's own installer over
+            // the current link: the same CodeLoader path as the GUI
+            // Install button, with the result as a record instead of a
+            // dialog. The flag refresh that follows tells whether the QML
+            // slot validated this time.
+            var pkgPath = s.substring(5).replace(/^\s+|\s+$/g, "")
+            var pkgOk = loader.installVescPackageFromPath(pkgPath)
+            emit({ k: "pkg", path: pkgPath, ok: pkgOk })
+            VescIf.reloadFirmware()
+            fwTimer.restart()
+        } else if (s.indexOf(":upload ") === 0) {
             enqueueUpload(resolve(s.substring(8).replace(/^\s+|\s+$/g, "")))
         } else if (s.indexOf(":run ") === 0) {
             replFile(s.substring(5).replace(/^\s+|\s+$/g, ""))
@@ -392,7 +403,8 @@ Item {
             // for diagnostics that don't need freshness.
             var rx = VescIf.getLastFwRxParams()
             emit({ k: "fw", connected: VescIf.isPortConnected(),
-                   hw: rx.hw, fw: rx.fw, fwName: rx.fwName ? rx.fwName : "",
+                   hw: rx.hw, major: rx.major, minor: rx.minor,
+                   fwName: rx.fwName ? rx.fwName : "",
                    customConfigNum: rx.customConfigNum,
                    hasQmlHw: rx.hasQmlHw, hasQmlApp: rx.hasQmlApp,
                    qmlAppFullscreen: rx.qmlAppFullscreen,
@@ -512,7 +524,8 @@ Item {
         onTriggered: {
             var rx = VescIf.getLastFwRxParams()
             emit({ k: "fw", connected: VescIf.isPortConnected(),
-                   hw: rx.hw, fw: rx.fw, fwName: rx.fwName ? rx.fwName : "",
+                   hw: rx.hw, major: rx.major, minor: rx.minor,
+                   fwName: rx.fwName ? rx.fwName : "",
                    customConfigNum: rx.customConfigNum,
                    hasQmlHw: rx.hasQmlHw, hasQmlApp: rx.hasQmlApp,
                    qmlAppFullscreen: rx.qmlAppFullscreen,
