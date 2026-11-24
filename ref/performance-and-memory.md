@@ -303,6 +303,26 @@ fw 6.06-era, floor-subtracted, `n = 5000`, no background thread). The old "~100 
 call" figure was a call plus its surrounding loop, and "a call costs 12.5 us" is only true
 for the zero-argument case.
 
+### CAN sends: wire time, not interpreter
+
+Measured on a VESC 6 MK6 at 500 kbit/s with an ACKing peer (the same bench build,
+`n = 100` per call, runtime environment):
+
+| call | per call | split |
+|---|---|---|
+| `(can-send-eid id buf8)` | 368 us | ~60 us dispatch + ~270 us wire (extended-ID, 8 data bytes) + mailbox hand-off |
+| `(can-send-eid id buf1)` | 171 us | dispatch + ~110 us wire |
+| `VESC_IF->can_transmit_eid(id, d, 8)` from C | ~270 us | wire + mailbox only |
+
+Two consequences. A frame's cost is dominated by the bus, not by the VM, so packing
+more per frame (or a higher bitrate) is the only real lever. And the per-frame lisp
+dispatch is removable: `VESC_IF->can_transmit_eid` exists in `vesc_c_if.h`
+(`native-extensions/vesc_c_if_api.md`), so a scheduler that sends N frames per tick can
+pack and send them in ONE extension call instead of N lisp calls — measured: a 14-frame
+telemetry tick went from a 31 Hz loop to 48 Hz once every frame was packed and sent from
+one extension entry point. The C call still blocks for the wire time of each frame it
+sends.
+
 ### The GC cliff
 
 `def`-shaped retention of cons cells while the heap fills (2750 cells on stock 7.00; the table below was measured on a 2753-cell local build, ~22 KiB):
