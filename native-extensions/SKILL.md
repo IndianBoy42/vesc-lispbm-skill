@@ -325,7 +325,7 @@ Available in `c_libs/utils/`:
 
 ## House Conventions from Shipped Packages
 
-`native-extensions/vesc-pkg-conventions.md` surveys `~/dev/vesc_pkg` (build and
+`native-extensions/vesc-pkg-conventions.md` surveys a `vesc_pkg` checkout (build and
 packaging, the `INIT_FUN`/`info->arg`/`stop_fun` contract, config pages via
 `conf_custom_add_config`, `plot_*` and `send_app_data` telemetry, CAN EID
 layout and `can-send-sid`/`event-can-eid`, and the measured extension-name

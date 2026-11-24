@@ -4,7 +4,7 @@ The upstream lispBM tree in this checkout contains a working x86-64 REPL, and th
 checked-in binary runs as is (no build, no 32-bit multilib):
 
 ```sh
-LP=~/dev/vesc/lispBM/lispBM
+LP=/path/to/bldc/lispBM/lispBM
 $LP/repl/repl --terminate --history_file "" -H 12000 -M 10 -s /tmp/myscript.lisp
 ```
 

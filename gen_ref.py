@@ -9,16 +9,20 @@ Generates:
     ref/*.md        - Section files extracted from README.md and CLAUDE.md
     ref/doc/*.md    - Filtered doc files important for writing lispbm scripts
     ref/INDEX.md    - Master index of all generated sections
+
+Defaults:
+    --lispbm-root  ../lispBM relative to this script, the bldc checkout layout
+    --out          ref/ next to this script
 """
 
-import os
 import re
 import shutil
 import argparse
 from pathlib import Path
 
-DEFAULT_LISPBM_ROOT = os.path.expanduser("~/dev/vesc/lispBM/lispBM")
-DEFAULT_OUT = os.path.expanduser("~/.config/opencode/skills/vesc-lispbm/ref")
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_LISPBM_ROOT = SCRIPT_DIR.parent / "lispBM"
+DEFAULT_OUT = SCRIPT_DIR / "ref"
 
 # Doc files relevant for *writing lispbm scripts* (not C internals, fonts, etc.)
 RELEVANT_DOCS = [

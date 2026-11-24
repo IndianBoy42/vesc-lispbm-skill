@@ -7,14 +7,19 @@ concise agent-facing documentation (signatures, behavior, usage — not implemen
 
 Usage:
     python3 gen_vesc_c_if_docs.py [--header /path/to/vesc_c_if.h] [--out /path/to/output]
+
+Defaults:
+    --header  ../c_libs/vesc_c_if.h relative to this script, the bldc checkout layout
+    --out     native-extensions/ next to this script
 """
 
 import re
 import argparse
 from pathlib import Path
 
-DEFAULT_HEADER = Path.home() / "dev/vesc/lispBM/c_libs/vesc_c_if.h"
-DEFAULT_OUT = Path.home() / ".config/opencode/skills/vesc-lispbm/native-extensions"
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_HEADER = SCRIPT_DIR.parent / "c_libs" / "vesc_c_if.h"
+DEFAULT_OUT = SCRIPT_DIR / "native-extensions"
 
 # Categories in order, with the comment marker that starts each section in the struct.
 # Only these exact comments (on their own line) are treated as category boundaries.

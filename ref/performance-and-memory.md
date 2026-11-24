@@ -2,7 +2,7 @@
 
 What a LispBM script costs on this firmware, measured on a VESC 6 MK6 (fw 7.0), and
 what to do about it. Every number here was measured on hardware, not derived — the
-bench driver behind it is `~/dev/feetech/vesc-lispbm/hd_gui.lbm`.
+bench driver behind it is a 30-function motor-driver script (`hd_gui.lbm`).
 
 Companion material: `20-defragmentable-memory.md` and `28-flash-memory.md` are the
 upstream reference chapters for `dm` and the const heap; this file is the practical,

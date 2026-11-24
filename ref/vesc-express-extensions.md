@@ -5,14 +5,14 @@ Every function the **VESC Express** (ESP32) firmware registers for LispBM, extra
 vesc_express source. Signatures come from the `// (name arg ...)` or `signature (...)`
 comment above each C handler where the firmware author wrote one.
 
-Source: `/home/anshuman/dev/vesc_express`  
+Source: a `vesc_express` checkout (path passed with `--express-root`).  
 Unique names: **277**, of which **56** carry a signature in the
 source. 336 registrations across 6 modules.
 
 Regenerate after updating the firmware checkout:
 
 ```sh
-python3 gen_express_extensions.py --express-root ~/dev/vesc_express
+python3 gen_express_extensions.py --express-root /path/to/vesc_express
 ```
 
 ## How to use this file

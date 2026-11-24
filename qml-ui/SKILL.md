@@ -305,7 +305,7 @@ packed.
 Generated from a vesc_tool checkout. Do not edit `ref/` by hand.
 
 ```bash
-python3 gen_qml_refs.py --vesc-tool-root ~/dev/vesc_tool
+python3 gen_qml_refs.py --vesc-tool-root /path/to/vesc_tool
 ```
 
 | File | Contents |

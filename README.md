@@ -72,11 +72,13 @@ Each script also prints its defaults with `--help`.
 ## Syncing
 
 Changes land in `vedderb/bldc` first. From that checkout, split the subtree and
-push it here:
+push it here. Pass the commit explicitly: in a colocated jj checkout, git's
+`HEAD` does not follow the jj working-copy revision (`jj log -r @ --no-graph -T
+commit_id`).
 
 ```sh
 git subtree split --prefix=lispBM/skill <commit> > /tmp/split-sha
-git push git@github.com:IndianBoy42/vesc-lispbm-skill.git \
+git push https://github.com/IndianBoy42/vesc-lispbm-skill.git \
     "$(tail -1 /tmp/split-sha)":refs/heads/main
 ```
 

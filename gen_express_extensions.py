@@ -11,7 +11,7 @@ Usage:
     python3 gen_express_extensions.py [--express-root /path/to/vesc_express] [--out DIR]
 
 Defaults:
-    --express-root  ~/dev/vesc_express
+    --express-root  ./vesc_express (relative to the working directory)
     --out           <this script's directory>/ref
 
 Output:
@@ -29,7 +29,7 @@ import re
 from collections import OrderedDict
 from pathlib import Path
 
-DEFAULT_EXPRESS_ROOT = Path.home() / "dev/vesc_express"
+DEFAULT_EXPRESS_ROOT = Path("vesc_express")
 DEFAULT_OUT = Path(__file__).resolve().parent / "ref"
 
 # Anything below these directories is not Express firmware surface.
@@ -185,12 +185,12 @@ def render(records: list[dict], express_root: Path) -> str:
     w("`gen_express_extensions.py` from `lbm_add_extension(\"name\", handler)` calls in the")
     w("vesc_express source. Signatures come from the `// (name arg ...)` or `signature (...)`")
     w("comment above each C handler where the firmware author wrote one.\n")
-    w(f"Source: `{express_root}`  ")
+    w("Source: a `vesc_express` checkout (path passed with `--express-root`).  ")
     w(f"Unique names: **{len(unique)}**, of which **{len(with_sig)}** carry a signature in the")
     w(f"source. {len(records)} registrations across {len(by_module)} modules.\n")
     w("Regenerate after updating the firmware checkout:\n")
     w("```sh")
-    w("python3 gen_express_extensions.py --express-root ~/dev/vesc_express")
+    w("python3 gen_express_extensions.py --express-root /path/to/vesc_express")
     w("```\n")
     w("## How to use this file\n")
     w("- This is the **Express-only** surface: display, WiFi/TCP, BLE, NVS, crypto, image and")

@@ -1,4 +1,4 @@
-# House conventions, surveyed from `~/dev/vesc_pkg`
+# House conventions, surveyed from a `vesc_pkg` checkout
 
 What shipped VESC packages do, compared against a from-scratch native
 extension. Sources: `c_libs/` (the shared build system), `c_libs/examples/`
