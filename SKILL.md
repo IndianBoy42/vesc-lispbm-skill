@@ -157,6 +157,14 @@ See `ref/` directory for section-by-section language reference extracted from `l
   lower or send two samples per period.
 - **`def`/`define` write the global environment**, from anywhere, including inside a
   function or a `{}` block. Use `let` for anything local.
+- **One namespace: a `defun` name and a global flag are the same symbol.**
+  `(defun f-stop () ...)` followed by `(setq f-stop false)` leaves `f-stop`
+  bound to `false`, and every later `(f-stop)` fails with "Symbol does not
+  represent a function" (the error is silent to a UI that only reads
+  replies). A command entry point and its "was aborted" flag must have
+  different names: `(defun sysid-stop () (setq sysid-abort true))`.
+  `setq` on a symbol that was never `def`'d also errors, so define flags
+  explicitly at the top of the script.
 - **`bufget-f32`/`bufset-f32` index in bytes**, not elements: element `i` is at `(* 4 i)`.
 - **`mod` follows the sign of the dividend**; add the modulus before the `mod` if the result
   must be non-negative.
