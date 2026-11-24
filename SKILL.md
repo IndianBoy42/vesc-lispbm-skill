@@ -101,8 +101,9 @@ Two facts about the device that matter whichever way you drive it:
 4. **Native extensions** are C functions compiled to ARM thumb binaries, uploaded as byte arrays, and loaded with `load-native-lib`
 
 ### Where things are
-This skill lives inside a VESC firmware checkout, so paths below are relative to the skill
-directory (`<fw>/lispBM/skill`).
+Paths below assume the skill is at `<fw>/lispBM/skill` inside a VESC firmware checkout
+(`<fw>` is a [`vedderb/bldc`](https://github.com/vedderb/bldc) clone). A standalone install
+has the same files, but `../` paths resolve only in a checkout; clone bldc to follow them.
 
 - `../README.md` — **the ESC/Express extension reference**: every function a script can
   call, with signature, platform (ESC vs Express) and minimum firmware version. It is the
@@ -346,19 +347,23 @@ differently from the local one (`get-temp-mot`).
 
 ## Reference Files
 
-Regenerate from upstream sources:
+Regenerate from upstream sources. Set the three paths to local checkouts first:
 ```bash
+VESC_FW=/path/to/bldc
+VESC_EXPRESS=/path/to/vesc_express
+VESC_TOOL=/path/to/vesc_tool
+
 # Language reference sections from lbmref.md
-python3 gen_ref.py --lispbm-root ~/dev/vesc/lispBM/lispBM
+python3 gen_ref.py --lispbm-root "$VESC_FW/lispBM/lispBM"
 
 # VESC C interface API docs from vesc_c_if.h
-python3 gen_vesc_c_if_docs.py --header ~/dev/vesc/lispBM/c_libs/vesc_c_if.h
+python3 gen_vesc_c_if_docs.py --header "$VESC_FW/lispBM/c_libs/vesc_c_if.h"
 
 # Express extension tables from a vesc_express checkout
-python3 gen_express_extensions.py --express-root ~/dev/vesc_express
+python3 gen_express_extensions.py --express-root "$VESC_EXPRESS"
 
 # Device-QML API and component tables from a vesc_tool checkout
-python3 qml-ui/gen_qml_refs.py --vesc-tool-root ~/dev/vesc_tool
+python3 qml-ui/gen_qml_refs.py --vesc-tool-root "$VESC_TOOL"
 ```
 
 - `ref/INDEX.md` — Master index of all language sections

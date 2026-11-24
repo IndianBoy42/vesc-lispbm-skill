@@ -1,3 +1,8 @@
+---
+name: vesc-tool-harness
+description: "Drive a VESC Tool window over its TCP server from a host script: send lispBM expressions, upload scripts and packages, and read structured replies. Use when an agent must control or observe a VESC interactively, or when no hardware is available and fake_vesc.py is enough."
+---
+
 # Attaching to a VESC Tool window over TCP (experimental)
 
 > **Status: experimental, but well exercised.** Verified on vesc_tool 7.00: end to end
@@ -282,6 +287,7 @@ Append one command per line. `:multi` splits on ` ; `.
 | `:multi <a> ; <b>` | several expressions, queued |
 | `:run <path>` | evaluate a whole file |
 | `:upload <path>` | erase + upload + run a `.lbm` (path relative to this directory) |
+| `:pkg <path>` | install a `.vescpkg` through the connected tool's own installer; emits `{k:"pkg", path, ok}` and refreshes the firmware records |
 | `:stats` | request one stats sample |
 | `:ping` | emit `{k:"pong", connected:…}` |
 | `:quit` | exit cleanly |
