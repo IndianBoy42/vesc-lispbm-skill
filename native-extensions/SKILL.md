@@ -11,6 +11,12 @@ Write, compile, and load native C extensions that add high-performance functions
 
 Native extensions are C functions compiled to ARM thumb binaries. They run on the VESC's STM32 MCU and can access the full VESC C interface (motor control, CAN, GPIO, IMU, etc.). Extensions are compiled to `.bin`, converted to a lisp byte array by `conv.py`, uploaded to VESC, and loaded with `load-native-lib`.
 
+The SDK is not bundled. Get `c_libs/` from a
+[`vedderb/bldc`](https://github.com/vedderb/bldc) checkout and set `VESC_FW` to
+that path. Code anchors here are relative to `$VESC_FW`; bundled copies of
+`lispif.c`, `lispif_vesc_extensions.c`, `lispif_c_lib.c`, and `lbm_dyn_lib.c`
+are in `../ref/upstream/`.
+
 ## Project Structure
 
 ```
@@ -26,7 +32,7 @@ TARGET = my_extension
 
 SOURCES = code.c
 
-VESC_C_LIB_PATH = /path/to/lispBM/c_libs
+VESC_C_LIB_PATH = $(VESC_FW)/lispBM/c_libs
 include $(VESC_C_LIB_PATH)rules.mk
 ```
 
@@ -143,7 +149,7 @@ fails. Three consequences worth knowing:
 `EXTENSION_STORAGE_SIZE` = **322** entries in 7.00 (`lispif.c`, the `#define`
 block next to `HEAP_SIZE`) and the firmware registers **244** names in 7.00
 (229 in 6.06). Count them with
-`grep -c 'lbm_add_extension(' ../lispif_vesc_extensions.c`. The ~78 free
+`grep -c 'lbm_add_extension(' ../ref/upstream/lispif_vesc_extensions.c`. The ~78 free
 slots look roomy, but every native lib and every re-load across boots spends
 them, and both numbers are **volatile** — re-check them on every firmware
 update (`ref/firmware-volatile-values.md`). Overrunning it fails *silently*

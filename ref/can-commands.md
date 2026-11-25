@@ -10,7 +10,9 @@ Three rungs, and only two of them are available to a Lisp script:
 
 A Lisp-only script cannot intercept. `lispif_process_can` is called *after* `decode_msg`, has no return value, and consuming semantics exist only in the C callback layer. Everything below about wire format, ids and timeouts applies to all three rungs.
 
-Paths are relative to the firmware checkout root (this file lives in `lispBM/skill/ref/`).
+Paths are relative to `$VESC_FW`, a
+[`vedderb/bldc`](https://github.com/vedderb/bldc) checkout. Firmware sources the
+skill bundles are in `ref/upstream/`.
 
 ## The receive path
 

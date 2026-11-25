@@ -101,20 +101,37 @@ Two facts about the device that matter whichever way you drive it:
 4. **Native extensions** are C functions compiled to ARM thumb binaries, uploaded as byte arrays, and loaded with `load-native-lib`
 
 ### Where things are
-Paths below assume the skill is at `<fw>/lispBM/skill` inside a VESC firmware checkout
-(`<fw>` is a [`vedderb/bldc`](https://github.com/vedderb/bldc) clone). A standalone install
-has the same files, but `../` paths resolve only in a checkout; clone bldc to follow them.
 
-- `../README.md` — **the ESC/Express extension reference**: every function a script can
-  call, with signature, platform (ESC vs Express) and minimum firmware version. It is the
-  only complete list; this skill does not duplicate it.
-- `../lispif_vesc_extensions.c` — ground truth for which names the firmware registers
-  (`lbm_add_extension("name", ...)`) and with what argument handling.
-- `../lispif.c` — script heap sizing, image save/restore, the `(stats)` counters.
-- `../lispBM/` — upstream lispBM: `src/`, `include/`, `doc/` (language, runtime, display and
-  dynlib references), `repl/` (a working x86-64 REPL: `repl/repl`), `tests/`.
-- `../c_libs/` — native extension SDK: `vesc_c_if.h`, `rules.mk`, `examples/`.
-- `../lispif_c_lib.c` — implementation of the C interface (`VESC_IF`) inside the firmware.
+The skill is self-contained for reading and writing scripts. It carries the
+firmware references it cites:
+
+- `ref/upstream/vesc-lispbm-extensions.md` — **the ESC/Express extension reference**:
+  every function a script can call, with signature, platform (ESC vs Express) and
+  minimum firmware version. It is the only complete list; this skill does not
+  duplicate it.
+- `ref/upstream/lispif_vesc_extensions.c` — ground truth for which names the firmware
+  registers (`lbm_add_extension("name", ...)`) and with what argument handling.
+- `ref/upstream/lispif.c` — script heap sizing, image save/restore, the `(stats)`
+  counters.
+- `ref/upstream/lispif_c_lib.c` — implementation of the C interface (`VESC_IF`) inside
+  the firmware.
+- `ref/upstream/lbm_dyn_lib.c` — the Lisp prelude functions the runtime loads on demand.
+
+Two things are not bundled because they are build and test inputs. Clone
+[`vedderb/bldc`](https://github.com/vedderb/bldc) anywhere and set `VESC_FW` to that
+path:
+
+- `$VESC_FW/lispBM/c_libs/` — native extension SDK: `vesc_c_if.h`, `rules.mk`,
+  `link.ld`, `utils/`, `examples/`.
+- `$VESC_FW/lispBM/lispBM/` — upstream lispBM, including the x86-64 host REPL at
+  `repl/repl` used by `ref/testing.md`.
+
+`ref/upstream/` is refreshed with `gen_ref.py`; its `PROVENANCE.md` maps each copy to
+its source.
+
+Code anchors elsewhere in the skill name files relative to `$VESC_FW`, for example
+`comm/comm_can.c` or `lispBM/lispif.c`. For the five files above, prefer the bundled
+copy under `ref/upstream/`.
 
 ### Loading Native Extensions from Lisp
 ```lisp
@@ -306,7 +323,7 @@ Background and the u32/literal traps: `ref/performance-and-memory.md`.
 
 ### Cost and lifetime of a script
 - Memory: 2753 cons cells (22024 B) plus a separate 28672 B pool for arrays and byte
-  buffers (`../lispif.c`). A ring buffer of N floats costs `4*N` bytes of the pool.
+  buffers (`ref/upstream/lispif.c`). A ring buffer of N floats costs `4*N` bytes of the pool.
 - **The script's code lives in that heap.** Every `defun` body is parsed into cons cells and
   stays live through its closure, so ~9-12 bytes of source costs one 8-byte cell: a 23 KB
   script fills the heap and every allocation then pays a full GC. Wrap the definitions in
@@ -323,7 +340,7 @@ Background and the u32/literal traps: `ref/performance-and-memory.md`.
 
 ### VESC-Specific LispBM Functions
 Available only on VESC firmware, not in standalone lispBM. Names below are verified against
-`../lispif_vesc_extensions.c`; `ref/vesc-esc-extensions.md` maps the whole surface by group.
+`ref/upstream/lispif_vesc_extensions.c`; `ref/vesc-esc-extensions.md` maps the whole surface by group.
 
 - Motor state: `get-rpm`, `get-rpm-fast`, `get-duty`, `get-current`, `get-current-in`,
   `get-id`, `get-iq`, `get-vd`, `get-vq`, `get-pos`, `get-batt`, `get-vin`, `get-fault`

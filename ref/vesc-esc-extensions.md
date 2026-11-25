@@ -5,29 +5,32 @@ describe a single VESC function. Everything a script running on the ESC *with a 
 attached* can call lives in the firmware's lisp interface, and the authoritative reference
 for it is:
 
-- `../README.md` (~8000 lines, in this checkout): every ESC/Express extension, with
+- `upstream/vesc-lispbm-extensions.md` (~8500 lines, bundled here): every ESC/Express extension, with
   signature, platform support and minimum firmware version. **Read the section for a
   function before using it.**
-- `../lispif_vesc_extensions.c`: the ground truth. Every name the firmware registers is a
+- `upstream/lispif_vesc_extensions.c`: the ground truth. Every name the firmware registers is a
   `lbm_add_extension("name", ...)` line, and the C body defines the exact argument and
   return types. When the README and a script's expectations disagree, this file decides.
-- `../lispif.c`: heap sizing and the `image`/`env` handling for stored scripts.
-- `../lispBM/lispBM/doc/runtimeref.md`: the runtime extensions that come from lispBM
+- `upstream/lispif.c`: heap sizing and the `image`/`env` handling for stored scripts.
+- `doc/runtimeref.md`: the runtime extensions that come from lispBM
   itself (buffers, arrays, strings, plotting primitives, `import`, ...).
 - `ref/vesc-express-extensions.md`: the **Express side** of the same surface, generated from
   the vesc_express sources. A name there is not automatically available here, and vice
   versa: check both before claiming a function exists.
 
+`upstream/` is bundled in this skill; `$VESC_FW` is a
+[`vedderb/bldc`](https://github.com/vedderb/bldc) checkout.
+
 Verify a name exists before relying on it (the README and the firmware version on the
 bench can disagree):
 
 ```sh
-grep -n 'lbm_add_extension("get-temp' ../lispif_vesc_extensions.c
+grep -n 'lbm_add_extension("get-temp' upstream/lispif_vesc_extensions.c
 ```
 
 ## The API surface, by group
 
-Details and argument order are in `../README.md`; this is the map.
+Details and argument order are in `upstream/vesc-lispbm-extensions.md`; this is the map.
 
 | Group | Functions |
 |---|---|
@@ -54,14 +57,14 @@ names really are inconsistent, and the same asymmetry exists for `canget-temp-fe
 rather than applied raw. 6.06 applied the clamp to motor conf only.
 
 Some names are not C extensions at all but short functions defined in a Lisp prelude that
-the runtime loads on demand (`../lispBM/src/extensions/lbm_dyn_lib.c`): `abs`, `filter`,
+the runtime loads on demand (`upstream/lbm_dyn_lib.c`): `abs`, `filter`,
 `foldl`, `foldr`, `iota`, `zip`, `zipwith`, `list-to-array`, `array-to-list`, `second`,
 `third`, `create-struct` and its accessors, `str-merge`, `str-cmp-asc`, `str-cmp-dsc`. They
 behave like the rest; that file is where to look when one of them surprises you.
 
 ## Which platform
 
-Most entries in `../README.md` carry a platform table. `ESC` means the motor controller
+Most entries in `upstream/vesc-lispbm-extensions.md` carry a platform table. `ESC` means the motor controller
 (this firmware), `Express` means the esp32 companion. Calling an Express-only name from an
 ESC script is an `undefined symbol` or an eval error, and many names are per-firmware
 version gated (6.00 / 6.05 / 6.06 / 7.00 — the 7.00 additions are marked above; `vesc_c_if.h` gained
@@ -69,7 +72,7 @@ version gated (6.00 / 6.05 / 6.06 / 7.00 — the 7.00 additions are marked above
 
 ## What a script costs
 
-From `../lispif.c`:
+From `upstream/lispif.c`:
 
 - cons cells (lisp values, closures, lists, boxed floats): `HEAP_SIZE` = 2750 cells
   (~22 KB) on the stock 7.00 build (2761 in 6.06 — it trades 8 B of heap per
@@ -88,4 +91,4 @@ From `../lispif.c`:
 Timing-critical work (anything that must run inside the control loop, or that needs more
 throughput than the lisp interpreter gives) belongs in C, loaded from the script with
 `load-native-lib`. See `native-extensions/SKILL.md` and `native-extensions/vesc_c_if_api.md`
-in this skill, and `../c_libs/` for the SDK and examples.
+in this skill, and `$VESC_FW/lispBM/c_libs/` for the SDK and examples.

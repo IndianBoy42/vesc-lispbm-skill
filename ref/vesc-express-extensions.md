@@ -19,8 +19,8 @@ python3 gen_express_extensions.py --express-root /path/to/vesc_express
 
 - This is the **Express-only** surface: display, WiFi/TCP, BLE, NVS, crypto, image and
   board extensions that do not exist on an ESC. The shared language lives in `ref/`
-  and the ESC-side API in `ref/vesc-esc-extensions.md`; `../README.md` in the bldc
-  checkout is the prose reference for names common to both.
+  and the ESC-side API in `ref/vesc-esc-extensions.md`; `upstream/vesc-lispbm-extensions.md`
+  is the prose reference for names common to both.
 - A registration here means the name exists **in the firmware version you are reading**,
   not that it exists on your board: some are behind `#if` guards (shown inline) and
   some live in one board's `hwconf/` file.

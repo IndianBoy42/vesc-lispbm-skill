@@ -1,7 +1,7 @@
 # House conventions, surveyed from a `vesc_pkg` checkout
 
 What shipped VESC packages do, compared against a from-scratch native
-extension. Sources: `c_libs/` (the shared build system), `c_libs/examples/`
+extension. Sources: `$VESC_FW/lispBM/c_libs/` (the shared build system), its `examples/`
 (the canonical skeletons), `lib_ws2812`, `lib_nau7802`, `crsf`, `balance`,
 `refloat`, `vdisp`, `vbms32`, `fishtail`.
 

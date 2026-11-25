@@ -3,11 +3,6 @@
 Agent Skills for writing, testing, and debugging lispBM scripts, device QML, and
 native C extensions on VESC motor controllers.
 
-This is the standalone distribution of the skill kept at `lispBM/skill` in the
-[VESC firmware tree](https://github.com/vedderb/bldc). That directory is the
-source of truth; this repository is synchronized from it with `git subtree`
-(see [Syncing](#syncing)).
-
 ## Skills
 
 | Directory | Name | Covers |
@@ -41,53 +36,26 @@ done
 The root skill references the sub-skills by relative path, so keep them together
 or install the whole tree into one directory.
 
-## Using it from a firmware checkout
+## What the skill needs
 
-Parts of the skill assume it sits at `<bldc>/lispBM/skill`. Paths such as
-`../lispif.c`, `../c_libs/vesc_c_if.h`, and `../lispBM/` resolve only in a
-checkout. Standalone copies carry the generated references, but version-specific
-claims are easiest to check against a clone of
-[`vedderb/bldc`](https://github.com/vedderb/bldc). Values that change between
-firmware releases are listed in `ref/firmware-volatile-values.md`.
+The skill is self-contained for reading and writing scripts. `ref/upstream/`
+carries a snapshot of the firmware references it cites: the ESC and Express
+extension reference, `lispif_vesc_extensions.c`, `lispif.c`, `lispif_c_lib.c`,
+and `lbm_dyn_lib.c`. The language chapters are in `ref/doc/`. See
+`ref/upstream/PROVENANCE.md` for the source of each file.
 
-## Regenerating the references
+Three inputs are not bundled because they are build or test tools. Clone
+[`vedderb/bldc`](https://github.com/vedderb/bldc) anywhere and set `VESC_FW` to
+that path.
 
-The checked-in `ref/`, `qml-ui/ref/`, and `native-extensions/vesc_c_if_api.md`
-files are generated from the firmware, VESC Tool, and VESC Express sources. Point
-the scripts at local checkouts:
+| Input | Used for |
+|---|---|
+| `$VESC_FW/lispBM/c_libs/` | the native extension SDK: `vesc_c_if.h`, `rules.mk`, `link.ld`, `utils/`, `examples/` |
+| `$VESC_FW/lispBM/lispBM/repl/repl` | running lispBM scripts off-target (`ref/testing.md`) |
+| `vesc_tool` | previewing or building a QML package, and the TCP harness |
 
-```sh
-VESC_FW=/path/to/bldc
-VESC_EXPRESS=/path/to/vesc_express
-VESC_TOOL=/path/to/vesc_tool
-
-python3 gen_ref.py --lispbm-root "$VESC_FW/lispBM/lispBM"
-python3 gen_vesc_c_if_docs.py --header "$VESC_FW/lispBM/c_libs/vesc_c_if.h"
-python3 gen_express_extensions.py --express-root "$VESC_EXPRESS"
-python3 qml-ui/gen_qml_refs.py --vesc-tool-root "$VESC_TOOL"
-```
-
-Each script also prints its defaults with `--help`.
-
-## Syncing
-
-Changes land in `vedderb/bldc` first. From that checkout, split the subtree and
-push it here. Pass the commit explicitly: in a colocated jj checkout, git's
-`HEAD` does not follow the jj working-copy revision (`jj log -r @ --no-graph -T
-commit_id`).
-
-```sh
-git subtree split --prefix=lispBM/skill <commit> > /tmp/split-sha
-git push https://github.com/IndianBoy42/vesc-lispbm-skill.git \
-    "$(tail -1 /tmp/split-sha)":refs/heads/main
-```
-
-Pull changes made directly in this repository back with:
-
-```sh
-git subtree pull --prefix=lispBM/skill \
-    https://github.com/IndianBoy42/vesc-lispbm-skill.git main --squash
-```
+`vesc_express` and `vesc_pkg` checkouts are needed only to regenerate reference
+tables, not to use the skill.
 
 ## Provenance and license
 
@@ -96,15 +64,15 @@ Licensed under the GNU General Public License v3.0; see `LICENSE`.
 The skill is derived from the VESC ecosystem and redistributes material from
 these GPL-3.0 projects:
 
-- [`vedderb/bldc`](https://github.com/vedderb/bldc) — firmware behavior, C
-  interface, and harness examples.
-- [`vedderb/lispBM`](https://github.com/vedderb/lispBM) — `ref/doc/` and the
+- [`vedderb/bldc`](https://github.com/vedderb/bldc): firmware behavior, the C
+  interface, and the bundled sources in `ref/upstream/`.
+- [`vedderb/lispBM`](https://github.com/vedderb/lispBM): `ref/doc/` and the
   section files in `ref/` are copied or split from its documentation.
-- [`vedderb/vesc_tool`](https://github.com/vedderb/vesc_tool) — `qml-ui/ref/`
+- [`vedderb/vesc_tool`](https://github.com/vedderb/vesc_tool): `qml-ui/ref/`
   tables are generated from its sources.
-- [`vedderb/vesc_express`](https://github.com/vedderb/vesc_express) —
+- [`vedderb/vesc_express`](https://github.com/vedderb/vesc_express):
   `ref/vesc-express-extensions.md` is generated from its sources.
-- [`vedderb/vesc_pkg`](https://github.com/vedderb/vesc_pkg) — package
+- [`vedderb/vesc_pkg`](https://github.com/vedderb/vesc_pkg): package
   conventions surveyed in `native-extensions/vesc-pkg-conventions.md`.
 
 VESC is a trademark of its respective owner. This project is not affiliated with

@@ -11,7 +11,9 @@ renders on the MCU. The same text runs in the desktop app, on Android and on
 iPhone, so a package ships one file and every VESC Tool shows it as a tab.
 
 Start here for the workflow. `ref/` holds generated tables of the API a GUI may
-call, and `template/` is a working package to copy.
+call, and `template/` is a working package to copy. Code anchors such as
+`vesc_tool/codeloader.cpp` are relative to a VESC Tool checkout; the template's
+`make` targets need the `vesc_tool` binary on `PATH`.
 
 ## Quick start
 

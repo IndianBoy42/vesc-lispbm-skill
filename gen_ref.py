@@ -8,6 +8,7 @@ Usage:
 Generates:
     ref/*.md        - Section files extracted from README.md and CLAUDE.md
     ref/doc/*.md    - Filtered doc files important for writing lispbm scripts
+    ref/upstream/   - VESC integration sources the skill cites
     ref/INDEX.md    - Master index of all generated sections
 
 Defaults:
@@ -23,6 +24,17 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_LISPBM_ROOT = SCRIPT_DIR.parent / "lispBM"
 DEFAULT_OUT = SCRIPT_DIR / "ref"
+
+# VESC integration files that the skill cites. They live next to the upstream
+# lispBM tree (in lispBM/), so copy them alongside the generated sections to
+# keep the skill usable outside a firmware checkout.
+UPSTREAM_FILES = [
+    ("../README.md", "vesc-lispbm-extensions.md"),
+    ("../lispif_vesc_extensions.c", "lispif_vesc_extensions.c"),
+    ("../lispif.c", "lispif.c"),
+    ("../lispif_c_lib.c", "lispif_c_lib.c"),
+    ("src/extensions/lbm_dyn_lib.c", "lbm_dyn_lib.c"),
+]
 
 # Doc files relevant for *writing lispbm scripts* (not C internals, fonts, etc.)
 RELEVANT_DOCS = [
@@ -131,6 +143,15 @@ def generate_index(meta: list[dict], doc_files: list[str]) -> str:
     for df in doc_files:
         lines.append(f"- [doc/{df}](doc/{df})")
 
+    lines.extend([
+        "",
+        "## Bundled Firmware Sources",
+        "",
+    ])
+    for _, name in UPSTREAM_FILES:
+        lines.append(f"- [upstream/{name}](upstream/{name})")
+    lines.append("- [upstream/PROVENANCE.md](upstream/PROVENANCE.md)")
+
     lines.append("")
     return '\n'.join(lines)
 
@@ -138,7 +159,7 @@ def generate_index(meta: list[dict], doc_files: list[str]) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Generate lispBM reference sections")
     parser.add_argument("--lispbm-root", default=DEFAULT_LISPBM_ROOT,
-                        help="Path to lispBM repo root")
+                        help="Path to the upstream lispBM tree (bldc's lispBM/lispBM)")
     parser.add_argument("--out", default=DEFAULT_OUT,
                         help="Output directory for ref files")
     args = parser.parse_args()
@@ -153,7 +174,7 @@ def main():
     # --- 1. Split lbmref.md into sections ---
     lbmref_path = lispbm_root / "doc" / "lbmref.md"
     if not lbmref_path.exists():
-        print(f"ERROR: {lbmref_path} not found")
+        print(f"ERROR: {lbmref_path} not found (pass --lispbm-root)")
         return 1
 
     content = lbmref_path.read_text(encoding='utf-8')
@@ -173,7 +194,24 @@ def main():
         else:
             print(f"  WARN: {src} not found, skipping")
 
-    # --- 3. Generate index ---
+    # --- 3. Copy the VESC integration sources the skill cites ---
+    upstream_out = out_dir / "upstream"
+    upstream_out.mkdir(parents=True, exist_ok=True)
+    for rel_src, name in UPSTREAM_FILES:
+        src = (lispbm_root / rel_src).resolve()
+        if not src.exists():
+            print(f"  WARN: {src} not found, skipping")
+            continue
+        dst = upstream_out / name
+        if src.suffix == ".md":
+            header = (f"<!-- Copied from vedderb/bldc lispBM/{Path(rel_src).name}. "
+                      "GPL-3.0; original copyright retained. -->\n\n")
+            dst.write_text(header + src.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            shutil.copy2(src, dst)
+        print(f"  Copied {src.relative_to(lispbm_root.parent)}")
+
+    # --- 4. Generate index ---
     index = generate_index(meta, copied_docs)
     (out_dir / "INDEX.md").write_text(index, encoding='utf-8')
     print(f"\nGenerated index: {out_dir / 'INDEX.md'}")

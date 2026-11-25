@@ -1,10 +1,11 @@
 # Running and testing lispBM scripts without a VESC
 
-The upstream lispBM tree in this checkout contains a working x86-64 REPL, and the
-checked-in binary runs as is (no build, no 32-bit multilib):
+A VESC firmware checkout contains a working x86-64 REPL, and the checked-in binary
+runs as is (no build, no 32-bit multilib). Clone
+[`vedderb/bldc`](https://github.com/vedderb/bldc) and set `VESC_FW` to it:
 
 ```sh
-LP=/path/to/bldc/lispBM/lispBM
+LP=$VESC_FW/lispBM/lispBM
 $LP/repl/repl --terminate --history_file "" -H 12000 -M 10 -s /tmp/myscript.lisp
 ```
 
@@ -86,7 +87,8 @@ two you cover both the maths and the plumbing.
 
 ## Verified gotchas
 
-Each of these cost real debugging time; all were reproduced in this checkout.
+Each of these cost real debugging time; all were reproduced on the bench and in
+the bundled REPL.
 
 | Symptom | Cause |
 |---|---|
